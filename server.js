@@ -6,6 +6,7 @@ import compression from 'compression';
 import { Server } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import { createStore } from './store.js';
+import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -74,6 +75,7 @@ app.get('/api/config', (_req, res) => {
     voice: !!(LIVEKIT_URL && LIVEKIT_API_KEY && LIVEKIT_API_SECRET),
     photos: !!APPS_SCRIPT_URL,
     driveFolderUrl: DRIVE_FOLDER_URL || '',
+    gearSheet: sheet.status,
   });
 });
 
@@ -140,6 +142,22 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 2e5, pingInterval: 20000, pingTimeout: 30000 });
 
 const online = new Map(); // socket.id -> personId
+const sheet = startSheetSync({ store, io });
+
+async function callScript(body) {
+  if (!APPS_SCRIPT_URL) throw new Error('script not configured');
+  const r = await fetch(APPS_SCRIPT_URL, {
+    method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ ...body, sheetId: SHEET_ID, gid: SHEET_GID }),
+  });
+  const j = await r.json().catch(() => ({ ok: false, error: 'bad script response' }));
+  if (!j.ok) {
+    const msg = /permission|הרשאה|access|You do not have/i.test(j.error || '') ? 'אין הרשאת עריכה לגיליון' : j.error === 'row changed' ? 'השורה בגיליון השתנתה – נסו שוב' : (j.error || 'שגיאה');
+    throw new Error(msg);
+  }
+  return j;
+}
+const nameFor = (id) => (store.get('people', id)?.name || '').trim().split(/\s+/)[0];
 const broadcastPresence = () => io.emit('presence', [...new Set(online.values())]);
 
 io.on('connection', (socket) => {
@@ -208,6 +226,29 @@ io.on('connection', (socket) => {
       const doc = await store.patch(coll, cur.id, { [field]: next });
       io.emit('upsert', { coll, doc, by: online.get(socket.id) || null });
       ack?.({ ok: true, doc });
+    } catch (e) { ack?.({ ok: false, error: e.message }); }
+  });
+
+  // Two-way gear sheet: write my name into an "אחראי" cell, or add an item to the first empty cell of a column
+  socket.on('gear:claim', async ({ id, on } = {}, ack) => {
+    try {
+      const me = online.get(socket.id); if (!me) throw new Error('מי אתה?');
+      const g = store.get('supplies', str(id, 40));
+      if (!g || g.source !== 'sheet') throw new Error('not found');
+      if (!g.sheetRespCol) throw new Error('לפריט הזה אין עמודת אחראי בגיליון');
+      await callScript({ action: 'sheetClaim', row: g.sheetRow, col: g.sheetCol, respCol: g.sheetRespCol, item: g.item, name: nameFor(me), on: !!on });
+      await sheet.sync();
+      ack?.({ ok: true });
+    } catch (e) { ack?.({ ok: false, error: e.message }); }
+  });
+  socket.on('gear:add', async ({ col, text } = {}, ack) => {
+    try {
+      const c = (sheet.status.columns || []).find((x) => x.col === Number(col));
+      if (!c) throw new Error('עמודה לא קיימת בגיליון');
+      if (!str(text, 140)) throw new Error('missing item');
+      await callScript({ action: 'sheetAdd', col: c.col, headerRow: c.headerRow, text: str(text, 140) });
+      await sheet.sync();
+      ack?.({ ok: true });
     } catch (e) { ack?.({ ok: false, error: e.message }); }
   });
 
