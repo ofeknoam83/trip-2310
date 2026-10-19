@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: trip-2310
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trip-2310-db
+          property: connectionString
+      - key: APPS_SCRIPT_URL
+        value: https://script.google.com/macros/s/AKfycbzL_Wa1jEb0MIxfCG7kRJCCFHZSqD4P_HanQgYfqSpLp-7JF6dkj2FwIrlzkH0dTdTa/exec
+      - key: DRIVE_FOLDER_URL
+        value: https://drive.google.com/drive/folders/12_cVJ_vMYbYHOF_EaNxHMZ76399Hac9N
+      - key: LIVEKIT_URL
+        sync: false  # e.g. wss://your-project.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+
+databases:
+  - name: trip-2310-db
+    plan: basic-256mb
+    region: frankfurt
+    databaseName: trip
+    user: trip
