@@ -164,6 +164,10 @@ img { display: block; }
 .who-row small { color: var(--sand-dim); }
 .who-row.not-coming { opacity: .5; }
 .who-row .btn.small { flex: none; }
+.news-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+.news-row:first-of-type { border-top: 0; }
+.news-row .av { --s: 28px; font-size: 12px; }
+.news-dot { flex: none; width: 10px; height: 10px; margin: 6px 9px; border-radius: 50%; background: var(--moon); box-shadow: 0 0 10px var(--moon); }
 .headcount { font-family: var(--display); font-size: 34px; color: var(--moon); line-height: 1; }
 
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

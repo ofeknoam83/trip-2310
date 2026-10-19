@@ -38,7 +38,7 @@ function distKm(a, b) {
 const fmtDist = (km) => (km < 1 ? `${Math.round(km * 1000)} מ׳` : `${km.toFixed(km < 10 ? 1 : 0)} ק״מ`);
 
 // ---------- state ----------
-const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info'];
+const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news'];
 const S = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let me = ls.get('trip.me');
 let online = new Set();
@@ -232,7 +232,7 @@ function renderColl(c) {
   if (c === 'people') return renderAll();
   if (c === 'tasks') { renderTasks(); renderHome(); }
   if (c === 'supplies') { renderGear(); renderHome(); }
-  if (c === 'info') renderHome();
+  if (c === 'info' || c === 'news') renderHome();
   if (c === 'locations' || c === 'pins') { updateMarkers(); renderWhere(); }
   renderDots();
 }
@@ -300,6 +300,8 @@ function renderHome() {
         <div style="display:flex;gap:8px"><button class="btn small" data-go="tasks">לקחת משימה</button><button class="btn small ghost" data-go="gear">להביא ציוד</button></div>`}
     </div>` : ''}
 
+    ${renderNews()}
+
     <div class="panel">
       <div class="panel-head"><h2>פרטי הטיול</h2><button class="btn small ghost" id="edit-info">${ICON.edit}עריכה</button></div>
       <dl class="kv">
@@ -328,6 +330,15 @@ function renderHome() {
   tickCountdown();
   clearInterval(countdownTimer);
   countdownTimer = setInterval(tickCountdown, 30000);
+}
+function renderNews() {
+  const news = [...S.news.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 6);
+  if (!news.length) return '';
+  return `<div class="panel">
+    <div class="panel-head"><h2>עדכונים מהקבוצה</h2><span class="small muted">מהווטסאפ, כל 10 דק׳</span></div>
+    ${news.map((n) => `<div class="news-row">${n.who && person(n.who) ? av(person(n.who), 28) : '<span class="news-dot"></span>'}
+      <div class="grow"><div>${esc(n.text)}</div><small class="muted">${ago(n.createdAt)}</small></div></div>`).join('')}
+  </div>`;
 }
 function tickCountdown() {
   const el = $('#countdown'); if (!el) return;

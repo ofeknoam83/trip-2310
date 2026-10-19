@@ -63,8 +63,14 @@ const SHAPES = {
     ...(d.lat !== undefined && { lat: num(d.lat) }),
     ...(d.lng !== undefined && { lng: num(d.lng) }),
   }),
+  // One-line updates taken from the WhatsApp group (written by the scheduled sync)
+  news: (d) => ({
+    ...(d.text !== undefined && { text: str(d.text, 300) }),
+    ...(d.who !== undefined && { who: str(d.who, 40) }),
+    ...(d.source !== undefined && { source: str(d.source, 20) }),
+  }),
   info: (d) => Object.fromEntries(
-    ['title', 'dates', 'start', 'area', 'meeting', 'meetingTime', 'notes']
+    ['title', 'dates', 'start', 'area', 'meeting', 'meetingTime', 'notes', 'waLast']
       .filter((k) => d[k] !== undefined).map((k) => [k, str(d[k], 600)]),
   ),
 };
@@ -182,6 +188,7 @@ io.on('connection', (socket) => {
         if (coll === 'tasks' && !clean.title) throw new Error('missing title');
         if (coll === 'supplies' && !clean.item) throw new Error('missing item');
         if (coll === 'pins' && (clean.lat == null || clean.lng == null)) throw new Error('missing coords');
+        if (coll === 'news' && !clean.text) throw new Error('missing text');
         doc = await store.put(coll, null, { ...base, ...clean, createdBy: by, createdAt: Date.now() });
         io.emit('upsert', { coll, doc, by: online.get(socket.id) || null });
       } else if (action === 'patch') {
@@ -204,7 +211,7 @@ io.on('connection', (socket) => {
         if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
         await store.del('people', pid);
         io.emit('remove', { coll: 'people', id: pid });
-      } else if (action === 'del' && ['tasks', 'supplies', 'pins'].includes(coll)) {
+      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });
       } else throw new Error('bad action');
