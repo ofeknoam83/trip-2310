@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import * as seed from './seed.js';
 
-export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news'];
+export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'ima_people'];
 
 const newId = () => crypto.randomBytes(6).toString('base64url');
 
@@ -72,7 +72,7 @@ export async function createStore() {
       return store.put(c, id, { ...cur, ...clean });
     },
     async del(c, id) { mem[c].delete(id); await persist.del(c, id); },
-    snapshot() { return Object.fromEntries(COLLECTIONS.map((c) => [c, store.all(c)])); },
+    snapshot() { return Object.fromEntries(COLLECTIONS.filter((c) => c !== 'ima_people').map((c) => [c, store.all(c)])); },
   };
 
   // Seed an empty store

@@ -7,6 +7,7 @@ import { Server } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import { createStore } from './store.js';
 import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
+import { mountIma } from './ima/ima.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -141,11 +142,13 @@ app.post('/api/photos', async (req, res) => {
 });
 
 app.get('/healthz', (_req, res) => res.send('ok'));
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ---------- realtime ----------
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 2e5, pingInterval: 20000, pingTimeout: 30000 });
+
+mountIma({ app, io, store, livekit: { url: LIVEKIT_URL, key: LIVEKIT_API_KEY, secret: LIVEKIT_API_SECRET } });
+app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const online = new Map(); // socket.id -> personId
 const sheet = startSheetSync({ store, io });

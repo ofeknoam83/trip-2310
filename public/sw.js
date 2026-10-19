@@ -1,5 +1,5 @@
 // Network-first for the app shell, so the site still opens with weak reception.
-const CACHE = 'trip-2310-v1';
+const CACHE = 'trip-2310-v2';
 const SHELL = ['/', '/styles.css', '/app.js', '/dunes.svg', '/topo.svg', '/avatars/group.jpg'];
 
 self.addEventListener('install', (e) => {
@@ -10,7 +10,7 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api') || url.pathname.startsWith('/socket.io')) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api') || url.pathname.startsWith('/socket.io') || url.pathname.startsWith('/ima')) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); return res; })
