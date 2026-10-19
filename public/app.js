@@ -91,6 +91,8 @@ socket.on('remove', ({ coll, id }) => {
   if (coll === 'people') renderGate();
   renderColl(coll);
 });
+let sheetStatus = null;
+socket.on('sheet', (st) => { sheetStatus = st; if (route === 'gear') renderSheetBar(); });
 socket.on('presence', (ids) => { online = new Set(ids); updateOnlineLine(); renderAll(); });
 socket.on('photos:changed', ({ by }) => {
   photosStale = true;
@@ -170,9 +172,11 @@ function mountSections() {
         <button data-scope="personal">ציוד אישי <span class="n"></span></button>
       </div>
       <p class="page-sub" id="gear-sub" style="margin-top:0"></p>
+      <div class="panel share-toggle" id="sheet-bar" hidden></div>
       <div class="panel" id="gear-progress"></div>
       <form class="add-bar" id="gear-form">
         <input class="input" name="item" placeholder="פריט, למשל: פטיש ליתדות" maxlength="140" autocomplete="off">
+        <select class="input" id="gear-cat" hidden style="flex:0 0 auto;width:auto"></select>
         <button class="btn" type="submit">${ICON.plus}הוספה</button>
       </form>
       <div class="chips" id="gear-chips"></div>
@@ -234,7 +238,7 @@ function renderColl(c) {
 }
 function renderDots() {
   const wanted = [...S.tasks.values()].filter((t) => !t.done && !t.owners?.length).length;
-  const unclaimed = [...S.supplies.values()].filter((s) => s.scope !== 'personal' && !s.bringer).length;
+  const unclaimed = [...S.supplies.values()].filter((s) => s.scope !== 'personal' && !(s.bringerText?.trim() || s.bringer)).length;
   const d1 = $('#dot-tasks'); d1.textContent = wanted; d1.classList.toggle('show', wanted > 0);
   const d2 = $('#dot-gear'); d2.textContent = unclaimed; d2.classList.toggle('show', unclaimed > 0);
   $('#dot-voice').classList.toggle('show', !!room);
@@ -265,11 +269,11 @@ function renderHome() {
   const supplies = [...S.supplies.values()];
   const openTasks = tasks.filter((t) => !t.done).length;
   const wanted = tasks.filter((t) => !t.done && !t.owners?.length).length;
-  const unclaimed = supplies.filter((s) => s.scope !== 'personal' && !s.bringer).length;
+  const unclaimed = supplies.filter((s) => s.scope !== 'personal' && !(s.bringerText?.trim() || s.bringer)).length;
   const personalGear = supplies.filter((s) => s.scope === 'personal');
   const myPacked = personalGear.filter((s) => (s.packedBy || []).includes(me)).length;
   const myTasks = tasks.filter((t) => !t.done && t.owners?.includes(me));
-  const myGear = supplies.filter((s) => s.bringer === me);
+  const myGear = supplies.filter((s) => s.scope !== 'personal' && ((s.bringers || []).includes(me) || s.bringer === me));
   const row = (k, v) => `<dt>${k}</dt><dd class="${v ? '' : 'empty'}">${v ? esc(v) : 'עוד לא נקבע'}</dd>`;
 
   $('#sec-home').innerHTML = `
@@ -602,6 +606,31 @@ const scopeOf = (s) => (s.scope === 'personal' ? 'personal' : 'shared');
 const gearOf = (scope) => [...S.supplies.values()].filter((s) => scopeOf(s) === scope);
 const gearCats = (scope) => [...new Set(gearOf(scope).map((s) => s.cat || 'כללי'))];
 const packedByMe = (s) => (s.packedBy || []).includes(me);
+const sheetMode = () => [...S.supplies.values()].some((s) => s.source === 'sheet');
+const bringersOf = (s) => (s.bringers?.length ? s.bringers : s.bringer ? [s.bringer] : []);
+const hasBringer = (s) => !!(s.bringerText?.trim() || s.bringer);
+
+function sheetEmit(ev, data, okMsg) {
+  socket.timeout(25000).emit(ev, data, (err, res) => {
+    if (err) toast('אין קליטה כרגע – נסו שוב');
+    else if (!res?.ok) toast('לא נשמר בגיליון: ' + esc(res?.error || 'שגיאה'));
+    else if (okMsg) toast(okMsg);
+  });
+}
+function renderSheetBar() {
+  const el = $('#sheet-bar'); if (!el) return;
+  const st = sheetStatus;
+  if (!sheetMode() && !st?.ok) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<div class="grow"><b>מסונכרן עם הגיליון</b><div class="small muted">${st?.ok ? 'עודכן ' + ago(st.at) : st?.error ? 'לא מצליח לקרוא את הגיליון כרגע' : 'מתחבר לגיליון…'} · שינויים בגיליון מופיעים כאן תוך שניות</div></div>
+    <a class="btn small ghost" href="${esc(st?.url || '#')}" target="_blank" rel="noopener">פתיחת הגיליון</a>`;
+}
+function renderAddCats() {
+  const sel = $('#gear-cat');
+  const cols = (sheetStatus?.columns || []).filter((c) => c.scope === gearScope);
+  sel.hidden = !sheetMode() || gearScope === 'personal' || cols.length < 2;
+  sel.innerHTML = cols.map((c) => `<option value="${c.col}">${esc(c.cat)}</option>`).join('');
+}
 
 function toggleIn(coll, id, field, value) {
   socket.timeout(15000).emit('toggle', { coll, id, field, value }, (err, res) => {
@@ -619,6 +648,12 @@ function bindGear() {
     e.preventDefault();
     const item = e.target.item.value.trim(); if (!item) return;
     e.target.item.value = '';
+    if (sheetMode()) {
+      const cols = (sheetStatus?.columns || []).filter((c) => c.scope === gearScope);
+      const col = gearScope === 'personal' ? cols[0]?.col : +$('#gear-cat').value || cols[0]?.col;
+      if (!col) return toast('לא נמצאה עמודה מתאימה בגיליון');
+      return sheetEmit('gear:add', { col, text: item }, `נוסף לגיליון: ${esc(item)}`);
+    }
     await op('supplies', 'add', null, { item, cat: gearScope === 'personal' ? 'אישי' : 'כללי', scope: gearScope });
   };
   $('#gear-list').addEventListener('click', async (e) => {
@@ -628,9 +663,15 @@ function bindGear() {
     if (del) { if (confirmInline(del)) op('supplies', 'del', s.id); return; }
     if (scopeOf(s) === 'personal') {
       if (e.target.closest('.check')) { if (!me) return showGate(); return toggleIn('supplies', s.id, 'packedBy', me); }
-      return gearSheet(s);
+      return s.source === 'sheet' ? undefined : gearSheet(s);
     }
     if (e.target.closest('.check')) return op('supplies', 'patch', s.id, { done: !s.done });
+    if (e.target.closest('.take') && s.source === 'sheet') {
+      if (!me) return showGate();
+      const on = !bringersOf(s).includes(me);
+      return sheetEmit('gear:claim', { id: s.id, on });
+    }
+    if (s.source === 'sheet') return;
     if (e.target.closest('.take')) {
       if (!me) return showGate();
       if (s.bringer && s.bringer !== me) return op('supplies', 'add', null, { item: s.item, cat: s.cat, qty: s.qty, bringer: me, scope: 'shared' });
@@ -641,6 +682,7 @@ function bindGear() {
 }
 
 function renderGear() {
+  renderSheetBar(); renderAddCats();
   $$('#gear-seg button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.scope === gearScope));
   const shared = gearOf('shared'); const personal = gearOf('personal');
   $('#gear-seg [data-scope=shared] .n').textContent = shared.length;
@@ -649,7 +691,7 @@ function renderGear() {
   input.placeholder = gearScope === 'personal' ? 'מה כל אחד צריך להביא? למשל: כפפות' : 'מה צריך לקבוצה? למשל: פטיש ליתדות';
   $('#gear-sub').textContent = gearScope === 'personal'
     ? 'כל אחד מביא לעצמו. מסמנים ✓ על מה שארזתם – כל אחד רואה רק את הסימון שלו.'
-    : 'ציוד לכולם: מישהו אחד מביא לכל הקבוצה. לוחצים ״אני מביא״ על מה שלוקחים.';
+    : sheetMode() ? 'הרשימה מגיעה מהגיליון. ״אני מביא״ כותב את השם שלך בעמודת האחראי, בלי למחוק אף אחד אחר.' : 'ציוד לכולם: מישהו אחד מביא לכל הקבוצה. לוחצים ״אני מביא״ על מה שלוקחים.';
 
   if (gearScope === 'personal') {
     const mine = personal.filter(packedByMe).length;
@@ -662,7 +704,7 @@ function renderGear() {
     const counts = { all: personal.length, todo: personal.filter((s) => !packedByMe(s)).length };
     $('#gear-chips').innerHTML = Object.keys(labels).map((k) => `<button class="chip" data-f="${k}" aria-pressed="${gearFilter === k}">${labels[k]} ${counts[k]}</button>`).join('');
     $$('#gear-chips .chip').forEach((c) => (c.onclick = () => { gearFilter = c.dataset.f; renderGear(); }));
-    const list = personal.filter((s) => gearFilter === 'all' || !packedByMe(s)).sort((a, b) => (packedByMe(a) - packedByMe(b)) || (a.createdAt - b.createdAt));
+    const list = personal.filter((s) => gearFilter === 'all' || !packedByMe(s)).sort((a, b) => (packedByMe(a) - packedByMe(b)) || ((a.order ?? a.createdAt) - (b.order ?? b.createdAt)));
     $('#gear-list').innerHTML = list.length ? `<div class="list">${list.map((s) => {
       const packed = packedByMe(s);
       const who = (s.packedBy || []).filter((id) => S.people.has(id));
@@ -670,36 +712,42 @@ function renderGear() {
         <button class="check" role="checkbox" aria-checked="${packed}" aria-label="ארזתי">${ICON.check}</button>
         <div class="grow"><span class="title">${esc(s.item)}${s.qty ? ` <span class="meta">× ${esc(s.qty)}</span>` : ''}</span>
           ${who.length ? `<span class="owners"><span class="stack">${who.slice(0, 6).map((id) => av(person(id), 22)).join('')}</span><span class="meta">${who.length} ארזו</span></span>` : '<span class="meta">אף אחד עוד לא ארז</span>'}</div>
-        <div class="row-side"><div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div></div>
+        ${s.source === 'sheet' ? '' : `<div class="row-side"><div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div></div>`}
       </div>`;
     }).join('')}</div>` : `<div class="empty-state">${gearFilter === 'todo' ? 'ארזת הכול!' : 'אין עדיין ציוד אישי. הוסיפו פריט למעלה.'}</div>`;
     return;
   }
 
-  const claimed = shared.filter((s) => s.bringer).length;
+  const claimed = shared.filter(hasBringer).length;
   const packed = shared.filter((s) => s.done).length;
   $('#gear-progress').innerHTML = `
     <div style="display:flex;justify-content:space-between;font-weight:700"><span>יש מי שמביא</span><span>${claimed} מתוך ${shared.length}</span></div>
     <div class="progress"><i style="width:${shared.length ? (claimed / shared.length) * 100 : 0}%"></i></div>
     <div class="small muted" style="margin-top:6px">${packed} פריטים כבר ארוזים</div>`;
   const labels = { all: 'הכול', none: 'בלי מביא', mine: 'מה אני מביא' };
-  const counts = { all: shared.length, none: shared.filter((s) => !s.bringer).length, mine: shared.filter((s) => s.bringer === me).length };
+  const counts = { all: shared.length, none: shared.filter((s) => !hasBringer(s)).length, mine: shared.filter((s) => bringersOf(s).includes(me)).length };
   if (!labels[gearFilter]) gearFilter = 'all';
   $('#gear-chips').innerHTML = Object.keys(labels).map((k) => `<button class="chip" data-f="${k}" aria-pressed="${gearFilter === k}">${labels[k]} ${counts[k]}</button>`).join('');
   $$('#gear-chips .chip').forEach((c) => (c.onclick = () => { gearFilter = c.dataset.f; renderGear(); }));
-  const list = shared.filter((s) => gearFilter === 'all' || (gearFilter === 'none' && !s.bringer) || (gearFilter === 'mine' && s.bringer === me));
-  const cats = gearCats('shared').filter((c) => list.some((s) => (s.cat || 'כללי') === c));
+  const list = shared.filter((s) => gearFilter === 'all' || (gearFilter === 'none' && !hasBringer(s)) || (gearFilter === 'mine' && bringersOf(s).includes(me)));
+  const catOrder = (c) => Math.min(...shared.filter((s) => (s.cat || 'כללי') === c).map((s) => s.order ?? Infinity));
+  const cats = gearCats('shared').filter((c) => list.some((s) => (s.cat || 'כללי') === c)).sort((a, b) => catOrder(a) - catOrder(b));
   $('#gear-list').innerHTML = cats.length ? cats.map((c) => `
     <h3 class="cat-title">${esc(c)}</h3>
-    <div class="list">${list.filter((s) => (s.cat || 'כללי') === c).sort((a, b) => (a.done - b.done) || (a.createdAt - b.createdAt)).map((s) => {
-      const mine = s.bringer === me;
-      return `<div class="row ${s.done ? 'done' : ''} ${!s.bringer ? 'wanted' : ''}" data-id="${esc(s.id)}">
+    <div class="list">${list.filter((s) => (s.cat || 'כללי') === c).sort((a, b) => (a.done - b.done) || ((a.order ?? a.createdAt) - (b.order ?? b.createdAt))).map((s) => {
+      const bs = bringersOf(s);
+      const mine = bs.includes(me);
+      const fromSheet = s.source === 'sheet';
+      const who = fromSheet
+        ? (s.bringerText?.trim() ? `<span class="owners">${bs.length ? `<span class="stack">${bs.map((id) => av(person(id), 22)).join('')}</span>` : ''}<span class="meta">${esc(s.bringerText)}</span></span>` : '<span class="wanted-tag">צריך מישהו שיביא</span>')
+        : (s.bringer ? `<span class="owners">${av(person(s.bringer), 22)}<span class="meta">${esc(firstName(person(s.bringer)))} מביא</span></span>` : '<span class="wanted-tag">צריך מישהו שיביא</span>');
+      const take = fromSheet && !s.sheetRespCol ? '' : `<button class="take ${mine ? 'mine' : ''}">${mine ? 'אני מביא' : hasBringer(s) ? 'גם אני' : 'אני מביא'}</button>`;
+      return `<div class="row ${s.done ? 'done' : ''} ${!hasBringer(s) ? 'wanted' : ''}" data-id="${esc(s.id)}">
         <button class="check" role="checkbox" aria-checked="${!!s.done}" aria-label="ארוז">${ICON.check}</button>
-        <div class="grow"><span class="title">${esc(s.item)}${s.qty ? ` <span class="meta">× ${esc(s.qty)}</span>` : ''}</span>
-          ${s.bringer ? `<span class="owners">${av(person(s.bringer), 22)}<span class="meta">${esc(firstName(person(s.bringer)))} מביא</span></span>` : '<span class="wanted-tag">צריך מישהו שיביא</span>'}</div>
+        <div class="grow"><span class="title">${esc(s.item)}${s.qty ? ` <span class="meta">× ${esc(s.qty)}</span>` : ''}</span>${who}</div>
         <div class="row-side">
-          <button class="take ${mine ? 'mine' : ''}">${mine ? 'אני מביא' : s.bringer ? 'גם אני' : 'אני מביא'}</button>
-          <div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div>
+          ${take}
+          ${fromSheet ? '' : `<div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div>`}
         </div>
       </div>`;
     }).join('')}</div>`).join('') : `<div class="empty-state">${gearFilter === 'mine' ? 'עוד לא לקחת שום ציוד.' : 'הרשימה ריקה. הוסיפו פריט למעלה.'}</div>`;
@@ -1161,5 +1209,5 @@ async function pump() {
 // ---------- boot ----------
 mountSections();
 go(route);
-fetch('/api/config').then((r) => r.json()).then((c) => { config = c; renderVoice(); if (route === 'photos') loadPhotos(); else renderPhotos(); }).catch(() => {});
+fetch('/api/config').then((r) => r.json()).then((c) => { config = c; sheetStatus = c.gearSheet || null; renderGear(); renderVoice(); if (route === 'photos') loadPhotos(); else renderPhotos(); }).catch(() => {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
