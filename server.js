@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import { createStore } from './store.js';
 import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
-import { mountIma } from './ima/ima.js';
+import { mountGames } from './games.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -63,6 +63,11 @@ const SHAPES = {
     ...(d.kind !== undefined && { kind: ['camp', 'meet', 'water', 'view', 'other'].includes(d.kind) ? d.kind : 'other' }),
     ...(d.lat !== undefined && { lat: num(d.lat) }),
     ...(d.lng !== undefined && { lng: num(d.lng) }),
+  }),
+  // Kids playing the games (points are only changed by the game engine)
+  kids: (d) => ({
+    ...(d.name !== undefined && { name: str(d.name, 30) }),
+    ...(d.parent !== undefined && { parent: str(d.parent, 40) }),
   }),
   // One-line updates taken from the WhatsApp group (written by the scheduled sync)
   news: (d) => ({
@@ -147,11 +152,11 @@ app.get('/healthz', (_req, res) => res.send('ok'));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 2e5, pingInterval: 20000, pingTimeout: 30000 });
 
-mountIma({ app, io, store, livekit: { url: LIVEKIT_URL, key: LIVEKIT_API_KEY, secret: LIVEKIT_API_SECRET } });
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const online = new Map(); // socket.id -> personId
 const sheet = startSheetSync({ store, io });
+mountGames({ io, store });
 
 async function callScript(body) {
   if (!APPS_SCRIPT_URL) throw new Error('script not configured');
@@ -187,11 +192,13 @@ io.on('connection', (socket) => {
         const base = coll === 'people'
           ? { name: 'אורח', companions: '', color: '#ff9e4a', avatar: '' }
           : coll === 'tasks' ? { owners: [], note: '', done: false }
-            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] } : {};
+            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] }
+              : coll === 'kids' ? { points: 0, parent: by } : {};
         if (coll === 'tasks' && !clean.title) throw new Error('missing title');
         if (coll === 'supplies' && !clean.item) throw new Error('missing item');
         if (coll === 'pins' && (clean.lat == null || clean.lng == null)) throw new Error('missing coords');
         if (coll === 'news' && !clean.text) throw new Error('missing text');
+        if (coll === 'kids' && !clean.name) throw new Error('missing name');
         doc = await store.put(coll, null, { ...base, ...clean, createdBy: by, createdAt: Date.now() });
         io.emit('upsert', { coll, doc, by: online.get(socket.id) || null });
       } else if (action === 'patch') {
@@ -214,7 +221,7 @@ io.on('connection', (socket) => {
         if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
         await store.del('people', pid);
         io.emit('remove', { coll: 'people', id: pid });
-      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news'].includes(coll)) {
+      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'kids'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });
       } else throw new Error('bad action');

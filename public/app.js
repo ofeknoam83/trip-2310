@@ -1,4 +1,6 @@
 /* טיול 23-24/10 – client */
+import { PLACES, REGIONS, locate } from '/places.js';
+import { BINGO } from '/games-data.js';
 
 // ---------- utils ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -38,7 +40,7 @@ function distKm(a, b) {
 const fmtDist = (km) => (km < 1 ? `${Math.round(km * 1000)} מ׳` : `${km.toFixed(km < 10 ? 1 : 0)} ק״מ`);
 
 // ---------- state ----------
-const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news'];
+const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'kids'];
 const S = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let me = ls.get('trip.me');
 let online = new Set();
@@ -80,6 +82,7 @@ socket.on('state', (snap) => {
   renderAll();
 });
 socket.on('upsert', ({ coll, doc, by }) => {
+  if (coll === 'locations' && !lastPos && doc.sharing && route === 'home') setTimeout(renderHome, 0);
   const prev = S[coll].get(doc.id);
   S[coll].set(doc.id, doc);
   if (by && by !== me) notifyChange(coll, prev, doc, by);
@@ -132,7 +135,7 @@ function toast(html, p) {
 }
 
 // ---------- routing ----------
-const ROUTES = ['home', 'tasks', 'gear', 'map', 'voice', 'photos'];
+const ROUTES = ['home', 'tasks', 'gear', 'map', 'voice', 'photos', 'games'];
 let route = ROUTES.includes(location.hash.slice(2)) ? location.hash.slice(2) : 'home';
 const sections = {};
 function go(r) {
@@ -205,6 +208,14 @@ function mountSections() {
       <div class="panel"><div class="panel-head"><h2>מי איפה</h2><span class="small muted">לחיצה ארוכה על המפה מוסיפה נקודה</span></div><div id="where-list"></div></div>
     </section>
     <section id="sec-voice"></section>
+    <section id="sec-games">
+      <h1 class="page-title">משחקים</h1>
+      <p class="page-sub">משחקים חיים לילדים – כל אחד משחק מהטלפון של ההורה, והנקודות נצברות בטבלה.</p>
+      <div class="panel" id="player-bar"></div>
+      <div class="panel" id="game-live"></div>
+      <div class="panel"><div class="panel-head"><h2>בינגו מדבר</h2><span class="small muted">מסמנים מה ראיתם בדרך</span></div><div id="bingo"></div></div>
+      <div class="panel board"><div class="panel-head"><h2>טבלת האלופים</h2></div><div id="kids-board"></div></div>
+    </section>
     <section id="sec-photos">
       <h1 class="page-title">תמונות מהטיול</h1>
       <p class="page-sub">כל תמונה שמעלים נשמרת בתיקייה משותפת בגוגל דרייב, ופתוחה לצפייה לכולם.</p>
@@ -225,7 +236,7 @@ function mountSections() {
 // ---------- render dispatch ----------
 function renderAll() {
   if (!loaded) return;
-  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots();
+  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots(); renderGames();
   if (route === 'photos') renderPhotos();
 }
 function renderColl(c) {
@@ -233,6 +244,7 @@ function renderColl(c) {
   if (c === 'tasks') { renderTasks(); renderHome(); }
   if (c === 'supplies') { renderGear(); renderHome(); }
   if (c === 'info' || c === 'news') renderHome();
+  if (c === 'kids') renderGames();
   if (c === 'locations' || c === 'pins') { updateMarkers(); renderWhere(); }
   renderDots();
 }
@@ -300,6 +312,8 @@ function renderHome() {
         <div style="display:flex;gap:8px"><button class="btn small" data-go="tasks">לקחת משימה</button><button class="btn small ghost" data-go="gear">להביא ציוד</button></div>`}
     </div>` : ''}
 
+    ${renderWhereAmI()}
+
     ${renderNews()}
 
     <div class="panel">
@@ -325,6 +339,9 @@ function renderHome() {
     </div>`;
 
   $('#edit-info').onclick = editInfo;
+  $('#locate-once')?.addEventListener('click', locateOnce);
+  $('#speak-here')?.addEventListener('click', (e) => speak($('.where-card .place-text')?.textContent || '', e.currentTarget));
+  $$('#place-tabs button').forEach((b) => (b.onclick = () => { placeTab = b.dataset.t; ls.set('trip.placeTab', placeTab); renderHome(); }));
   $('#add-person').onclick = () => personSheet(null);
   $$('#sec-home [data-person]').forEach((b) => (b.onclick = () => personSheet(person(b.dataset.person))));
   tickCountdown();
@@ -340,6 +357,75 @@ function renderNews() {
       <div class="grow"><div>${esc(n.text)}</div><small class="muted">${ago(n.createdAt)}</small></div></div>`).join('')}
   </div>`;
 }
+// ---------- where are we (places south of Be'er Sheva) ----------
+let geoPos = null;
+let placeTab = ls.get('trip.placeTab') || 'geo';
+const PLACE_TABS = { geo: 'גאוגרפיה', history: 'היסטוריה', kids: 'לילדים' };
+function refPos() {
+  if (lastPos) return { lat: lastPos.lat, lng: lastPos.lng, src: 'me' };
+  const mine = S.locations.get(me); if (mine) return { lat: mine.lat, lng: mine.lng, src: 'me' };
+  if (geoPos) return { ...geoPos, src: 'me' };
+  const other = [...S.locations.values()].filter((l) => l.sharing).sort((a, b) => b.t - a.t)[0];
+  return other ? { lat: other.lat, lng: other.lng, src: other.id } : null;
+}
+function locateOnce() {
+  if (!navigator.geolocation) return toast('הדפדפן לא תומך במיקום');
+  toast('מאתר מיקום…');
+  navigator.geolocation.getCurrentPosition((p) => { geoPos = { lat: p.coords.latitude, lng: p.coords.longitude }; renderHome(); checkArrival(geoPos); },
+    () => toast('לא קיבלנו מיקום. אפשרו גישה למיקום בדפדפן.'), { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+}
+function renderWhereAmI() {
+  const pos = refPos();
+  if (!pos) return `<div class="panel where-card"><div class="panel-head"><h2>איפה אנחנו?</h2></div>
+    <p class="muted" style="margin:0 0 12px">שתפו מיקום או זהו אותו פעם אחת, ונספר לכם על המקום: גאוגרפיה, היסטוריה ופינה לילדים.</p>
+    <button class="btn small teal" id="locate-once">זיהוי מיקום</button></div>`;
+  const { inside, nearest, region } = locate(pos);
+  const subject = inside || region;
+  const by = pos.src !== 'me' && person(pos.src) ? ` · לפי המיקום של ${esc(firstName(person(pos.src)))}` : '';
+  const near = `<div class="near">${nearest.slice(0, 3).map((p) => `<button class="chip" data-place="${p.id}">${esc(p.name)} · ${fmtDist(p.d)}</button>`).join('')}</div>`;
+  if (!subject) return `<div class="panel where-card"><div class="panel-head"><h2>איפה אנחנו?</h2></div>
+    <p class="muted" style="margin:0 0 10px">אתם מחוץ לאזורים שהמדריך מכיר (דרומית לבאר שבע וים המלח)${by}. המקומות הכי קרובים:</p>${near}</div>`;
+  return `<div class="panel where-card">
+    <small class="muted">${inside ? 'אתם עכשיו ב' : 'האזור שבו אתם'}${by}</small>
+    <h2 class="where-title">${esc(subject.name)}</h2>
+    ${inside && region ? `<span class="region-tag">${esc(region.name)}</span>` : ''}
+    <div class="seg" id="place-tabs" style="margin-top:12px">${Object.entries(PLACE_TABS).map(([k, v]) => `<button data-t="${k}" aria-pressed="${placeTab === k}">${v}</button>`).join('')}</div>
+    <p class="place-text">${esc(subject[placeTab] || subject.geo)}</p>
+    <button class="btn small ghost speak" id="speak-here">🔊 הקראה</button>
+    <small class="muted">${inside ? 'עוד מקומות קרובים' : 'מקומות קרובים'}</small>${near}
+  </div>`;
+}
+function placeSheet(id) {
+  const p = PLACES.find((x) => x.id === id); if (!p) return;
+  const region = REGIONS.find((g) => g.id === p.region);
+  const pos = refPos();
+  const d = pos ? fmtDist(distKm(pos, p)) : '';
+  openSheet(`
+    <h3>${esc(p.name)}</h3>
+    <p class="small muted" style="margin:-8px 0 14px">${esc(region?.name || '')}${d ? ` · ${d} מכם` : ''}</p>
+    <div class="place-sec"><b>גאוגרפיה</b><p>${esc(p.geo)}</p></div>
+    <div class="place-sec"><b>היסטוריה</b><p>${esc(p.history)}</p></div>
+    <div class="place-sec kids"><b>לילדים</b><p>${esc(p.kids)}</p></div>
+    <div class="actions">
+      <button class="btn teal speak" id="speak-all">🔊 הקראה</button>
+      <a class="btn ghost" href="https://waze.com/ul?ll=${p.lat},${p.lng}&navigate=yes" target="_blank" rel="noopener">Waze</a>
+    </div>`, (r) => {
+    $('#speak-all', r).onclick = (e) => speak(`${p.name}. ${p.geo} ${p.history} ${p.kids}`, e.currentTarget);
+  });
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-place]');
+  if (b) { e.preventDefault(); map?.closePopup(); placeSheet(b.dataset.place); }
+});
+function checkArrival(pos) {
+  if (!pos) return;
+  const { inside } = locate(pos);
+  if (!inside || ls.get('trip.lastPlace') === inside.id) return;
+  ls.set('trip.lastPlace', inside.id);
+  toast(`הגעתם ל<b>${esc(inside.name)}</b> <button class="btn small teal" data-place="${inside.id}">לסקירה</button>`);
+  if (route === 'home') renderHome();
+}
+
 function tickCountdown() {
   const el = $('#countdown'); if (!el) return;
   const start = Date.parse(info().start || '');
@@ -513,7 +599,7 @@ function openSheet(html, bind) {
   bind?.(root);
   setTimeout(() => $('.sheet input:not([type=file]), .sheet textarea', root)?.focus({ preventScroll: true }), 250);
 }
-function closeSheet() { $('#sheet-root').innerHTML = ''; }
+function closeSheet() { $('#sheet-root').innerHTML = ''; try { speechSynthesis.cancel(); } catch {} }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 function peoplePicker(selected, multi) {
@@ -856,7 +942,13 @@ function updateMarkers() {
       <button class="btn small danger" style="margin-top:8px" data-delpin="${esc(pin.id)}">מחיקת נקודה</button>`);
   }
   for (const [id, m] of pinMarkers) if (!S.pins.has(id)) { m.remove(); pinMarkers.delete(id); }
+  if (!poiLayer) {
+    poiLayer = L.layerGroup(PLACES.map((p) => L.marker([p.lat, p.lng], {
+      icon: L.divIcon({ className: '', iconSize: [14, 14], iconAnchor: [7, 7], html: '<div class="poi"></div>' }), zIndexOffset: -500,
+    }).bindPopup(`<b>${esc(p.name)}</b><br><button class="btn small teal" style="margin-top:8px" data-place="${p.id}">סקירה גאוגרפית והיסטורית</button>`))).addTo(map);
+  }
 }
+let poiLayer = null;
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-delpin]');
   if (b && confirmInline(b)) { map?.closePopup(); op('pins', 'del', b.dataset.delpin); }
@@ -904,6 +996,7 @@ function startShare() {
   watchId = navigator.geolocation.watchPosition((pos) => {
     lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, heading: pos.coords.heading, speed: pos.coords.speed };
     sendLoc(false);
+    checkArrival(lastPos);
     $('#share-status').textContent = `משתף · דיוק ${Math.round(pos.coords.accuracy)} מ׳`;
   }, (err) => {
     $('#share-status').textContent = err.code === 1 ? 'אין הרשאת מיקום. אפשרו מיקום לאתר בהגדרות הדפדפן.' : 'מחפש אות GPS…';
@@ -1222,3 +1315,175 @@ mountSections();
 go(route);
 fetch('/api/config').then((r) => r.json()).then((c) => { config = c; sheetStatus = c.gearSheet || null; renderGear(); renderVoice(); if (route === 'photos') loadPhotos(); else renderPhotos(); }).catch(() => {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+// ---------- games (kids) ----------
+let game = null;
+let currentKid = ls.get('trip.kid');
+const kidOf = (id) => S.kids.get(id);
+const myKids = () => [...S.kids.values()].filter((k) => k.parent === me);
+function kidAv(k, s = 24) { return av({ id: k?.id, name: k?.name || '?', color: person(k?.parent)?.color || '#7fe0d2' }, s); }
+function setKid(id) {
+  currentKid = id; ls.set('trip.kid', id); socket.emit('kid:select', id || '');
+  renderGames();
+}
+socket.on('connect', () => { if (currentKid) socket.emit('kid:select', currentKid); });
+socket.on('game', (g) => {
+  const was = game?.phase;
+  game = g;
+  if (g && route !== 'games' && was !== g.phase && (g.phase === 'question' && g.idx === 0 || g.phase === 'compose')) {
+    toast(`🎲 התחיל משחק: ${g.type === 'trivia' ? 'חידון מדבר' : 'אמת או שקר'} <button class="btn small" data-go="games">להצטרף</button>`);
+  }
+  $('#dot-game')?.classList.toggle('show', !!g && g.phase !== 'end');
+  renderGames();
+});
+socket.on('bingo', ({ name }) => toast(`🎉 בינגו! ${esc(name)} השלים שורה וקיבל 150 נקודות`));
+const gemit = (ev, d) => new Promise((r) => socket.timeout(10000).emit(ev, d, (err, res) => {
+  if (err) toast('אין קליטה כרגע'); else if (res && !res.ok && res.error) toast(esc(res.error));
+  r(res);
+}));
+
+let gameTimer;
+function renderGames() {
+  const root = $('#sec-games'); if (!root) return;
+  clearInterval(gameTimer);
+  // player bar
+  const k = kidOf(currentKid);
+  if (currentKid && !k) { currentKid = null; ls.set('trip.kid', null); }
+  const all = [...S.kids.values()].sort((a, b) => (a.parent === me ? -1 : 0) - (b.parent === me ? -1 : 0) || a.name.localeCompare(b.name, 'he'));
+  const suggest = (meP()?.companions || '').replace(/\s+ו(?=\S)/g, ',').split(/[,،+]/).map((x) => x.trim()).filter((n) => n && !all.some((x) => x.name === n));
+  $('#player-bar').innerHTML = `
+    <div class="panel-head" style="margin-bottom:8px"><h2>מי משחק בטלפון הזה?</h2></div>
+    <div class="player-bar">
+      ${all.map((x) => `<button class="kid-chip" data-kid="${esc(x.id)}" aria-pressed="${x.id === currentKid}">${kidAv(x)}${esc(x.name)}</button>`).join('')}
+      ${suggest.map((n) => `<button class="kid-chip add" data-addkid="${esc(n)}">+ ${esc(n)}</button>`).join('')}
+      <button class="kid-chip add" id="add-kid">+ ילד/ה</button>
+    </div>
+    ${!all.length ? '<p class="small muted" style="margin:10px 0 0">מוסיפים את הילדים פעם אחת, ואז כל טלפון בוחר מי משחק בו.</p>' : ''}`;
+  $$('#player-bar [data-kid]').forEach((b) => (b.onclick = () => setKid(b.dataset.kid === currentKid ? null : b.dataset.kid)));
+  $$('#player-bar [data-addkid]').forEach((b) => (b.onclick = async () => { const d = await op('kids', 'add', null, { name: b.dataset.addkid, parent: me }); if (d) setKid(d.id); }));
+  $('#add-kid').onclick = () => openSheet(`<h3>ילד/ה חדש/ה</h3>
+    <label class="field"><span>שם</span><input class="input" id="kn" maxlength="30" placeholder="למשל: עמית"></label>
+    <div class="actions"><button class="btn" id="ks">הוספה</button><button class="btn ghost" data-close>ביטול</button></div>`, (r) => {
+    $('#ks', r).onclick = async () => { const n = $('#kn', r).value.trim(); if (!n) return; closeSheet(); const d = await op('kids', 'add', null, { name: n, parent: me }); if (d) setKid(d.id); };
+  });
+
+  // live game / launcher
+  const live = $('#game-live');
+  if (!game) {
+    live.innerHTML = `<div class="launch">
+      <button data-start="trivia"><span class="ic">🧠</span><span><b>חידון מדבר</b><small>8 שאלות על המדבר, החיות והמקומות. מי שעונה נכון ומהר – מקבל יותר נקודות.</small></span></button>
+      <button data-start="tf"><span class="ic">🤥</span><span><b>אמת או שקר</b><small>כל ילד כותב שני משפטים על עצמו – אחד אמת ואחד שקר. כולם מנחשים.</small></span></button>
+    </div>`;
+    $$('[data-start]', live).forEach((b) => (b.onclick = () => gemit('game:start', { type: b.dataset.start, by: me })));
+  } else if (game.type === 'trivia') renderTrivia(live);
+  else if (game.type === 'tf') renderTF(live);
+
+  renderBingo();
+  // leaderboard
+  const board = [...S.kids.values()].sort((a, b) => (b.points || 0) - (a.points || 0));
+  $('#kids-board').innerHTML = board.length ? board.map((x, i) => `
+    <div class="who-row">${kidAv(x, 40)}<div class="grow"><b>${['🥇', '🥈', '🥉'][i] || ''} ${esc(x.name)} <small>${person(x.parent) ? '· של ' + esc(firstName(person(x.parent))) : ''}</small></b></div><span class="pts">${x.points || 0}</span></div>`).join('')
+    : '<p class="muted" style="margin:0">עוד אין שחקנים. הוסיפו ילדים למעלה.</p>';
+}
+const stopBtn = '<button class="btn small ghost" data-gstop>סיום משחק</button>';
+function bindStop(el) { $$('[data-gstop]', el).forEach((b) => (b.onclick = () => gemit('game:stop'))); }
+const needKid = () => (currentKid ? '' : '<p class="small" style="color:var(--ember-2);margin:0 0 10px">בחרו למעלה מי משחק בטלפון הזה כדי להשתתף.</p>');
+
+function renderTrivia(el) {
+  const g = game; const mine = g.answers?.[currentKid];
+  const answered = (g.answered || []).includes(currentKid);
+  if (g.phase === 'end') {
+    const top = Object.entries(g.round || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    el.innerHTML = `<div class="q-head"><span>החידון נגמר!</span>${stopBtn}</div>
+      ${top.length ? `<div class="podium">${top.map(([id, p], i) => `<div class="p">${kidAv(kidOf(id), 48)}<span>${esc(kidOf(id)?.name || '?')}</span><div class="bar" style="height:${[110, 80, 60][i]}px">${i + 1}</div><small>${p} נק׳</small></div>`).join('')}</div>` : '<p>אף אחד לא צבר נקודות הפעם 🙂</p>'}
+      <button class="btn block" data-again>עוד סיבוב</button>`;
+    $('[data-again]', el).onclick = async () => { await gemit('game:stop'); gemit('game:start', { type: 'trivia', by: me }); };
+    return bindStop(el);
+  }
+  const revealed = g.phase === 'reveal';
+  el.innerHTML = `${needKid()}
+    <div class="q-head"><span>שאלה ${g.idx + 1} מתוך ${g.total}</span><span>ענו: ${(g.answered || []).length}</span></div>
+    ${revealed ? '' : '<div class="timebar"><i id="tb"></i></div>'}
+    <div class="q-text">${esc(g.q)}</div>
+    <div class="opts ${revealed ? 'revealed' : ''}">${g.o.map((o, i) => `<button data-a="${i}" class="${revealed && i === g.answer ? 'right' : ''} ${(revealed ? mine?.choice : pickedNow) === i ? 'picked' : ''}" ${answered || revealed || !currentKid ? 'disabled' : ''}>${esc(o)}</button>`).join('')}</div>
+    ${revealed ? `<div class="fact">💡 ${esc(g.fact)}</div>
+      <div class="gains">${Object.entries(g.gained || {}).map(([id, p]) => `<span class="gain">${esc(kidOf(id)?.name || '?')} +${p}</span>`).join('') || '<span class="small muted">אף אחד לא צדק הפעם</span>'}</div>` : ''}
+    <div class="actions"><button class="btn ghost" data-gnext>${revealed ? 'לשאלה הבאה' : 'לגלות תשובה'}</button>${stopBtn}</div>`;
+  $$('[data-a]', el).forEach((b) => (b.onclick = async () => { pickedNow = +b.dataset.a; renderTrivia(el); await gemit('trivia:answer', { kidId: currentKid, choice: +b.dataset.a }); }));
+  $('[data-gnext]', el).onclick = () => gemit('trivia:next');
+  bindStop(el);
+  if (!revealed) {
+    const tick = () => { const t = $('#tb'); if (!t) return; t.style.width = Math.max(0, (g.endsAt - Date.now()) / 200) + '%'; };
+    tick(); gameTimer = setInterval(tick, 250);
+  } else pickedNow = null;
+}
+let pickedNow = null;
+
+function renderTF(el) {
+  const g = game; const teller = kidOf(g.teller);
+  if (g.phase === 'compose') {
+    el.innerHTML = `${needKid()}<div class="q-head"><span>אמת או שקר – מי מספר?</span>${stopBtn}</div>
+      <p class="muted" style="margin:8px 0 12px">הילד שמספר כותב שני משפטים על עצמו: אחד אמת ואחד שקר. כולם ינחשו מה האמת.</p>
+      ${currentKid ? `<label class="field"><span>משפט ראשון</span><input class="input" id="tfa" maxlength="160" placeholder="למשל: פעם ראיתי נחש בגינה"></label>
+      <label class="field"><span>משפט שני</span><input class="input" id="tfb" maxlength="160" placeholder="למשל: אני יודע לשרוק עם שתי אצבעות"></label>
+      <div class="field"><span>איזה מהם אמת?</span><div class="seg" id="tft" style="margin:0"><button type="button" data-t="0" aria-pressed="true">הראשון</button><button type="button" data-t="1" aria-pressed="false">השני</button></div></div>
+      <button class="btn block" id="tfs">שליחה – ${esc(kidOf(currentKid)?.name || '')} מספר/ת</button>` : ''}`;
+    let t = 0;
+    $$('#tft button', el).forEach((b) => (b.onclick = () => { t = +b.dataset.t; $$('#tft button', el).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
+    $('#tfs', el)?.addEventListener('click', () => gemit('tf:submit', { kidId: currentKid, a: $('#tfa', el).value, b: $('#tfb', el).value, trueIdx: t }));
+    return bindStop(el);
+  }
+  const reveal = g.phase === 'tfreveal';
+  const isTeller = currentKid === g.teller;
+  const myVote = g.votes?.[currentKid] ?? tfPick;
+  el.innerHTML = `${needKid()}<div class="q-head"><span>${kidAv(teller, 24)} ${esc(teller?.name || '?')} מספר/ת</span><span>ניחשו: ${(g.voted || []).length}</span></div>
+    <div class="tf-cards">${g.statements.map((st, i) => `<button data-v="${i}" class="${reveal ? (i === g.trueIdx ? 'true' : 'false') : ''} ${myVote === i ? 'picked' : ''}" ${reveal || isTeller || !currentKid ? 'disabled' : ''}>
+      ${reveal ? `<span class="tag">${i === g.trueIdx ? '✅ אמת' : '❌ שקר'}</span>` : ''}${esc(st)}</button>`).join('')}</div>
+    ${isTeller && !reveal ? '<p class="muted" style="margin:0 0 10px">אל תגלו! מחכים שכולם ינחשו.</p>' : ''}
+    ${reveal ? `<div class="gains">${Object.entries(g.gained || {}).map(([id, p]) => `<span class="gain">${esc(kidOf(id)?.name || '?')} +${p}</span>`).join('') || '<span class="small muted">אין נקודות בסיבוב הזה</span>'}</div>` : ''}
+    <div class="actions">${reveal ? '<button class="btn" data-tfnext>הבא בתור</button>' : '<button class="btn" data-tfrev>לגלות את האמת</button>'}${stopBtn}</div>`;
+  $$('[data-v]', el).forEach((b) => (b.onclick = () => { tfPick = +b.dataset.v; renderTF(el); gemit('tf:vote', { kidId: currentKid, pick: +b.dataset.v }); }));
+  $('[data-tfrev]', el)?.addEventListener('click', () => gemit('tf:reveal'));
+  $('[data-tfnext]', el)?.addEventListener('click', () => { tfPick = null; gemit('tf:next'); });
+  bindStop(el);
+}
+let tfPick = null;
+
+// bingo: a card per phone, kept in the browser
+const LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+function bingoCard() {
+  let c = null; try { c = JSON.parse(ls.get('trip.bingo') || 'null'); } catch {}
+  if (!c || c.items?.length !== 9) {
+    const pool = [...BINGO]; for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    c = { items: pool.slice(0, 9), on: [], claimed: [] }; ls.set('trip.bingo', JSON.stringify(c));
+  }
+  return c;
+}
+function renderBingo() {
+  const el = $('#bingo'); if (!el) return;
+  const c = bingoCard();
+  const wins = LINES.filter((l) => l.every((i) => c.on.includes(i)));
+  const newWin = wins.find((l) => !c.claimed.includes(l.join()));
+  el.innerHTML = `<div class="bingo">${c.items.map((it, i) => `<button data-b="${i}" class="${c.on.includes(i) ? 'on' : ''} ${wins.some((l) => l.includes(i)) ? 'win' : ''}">${esc(it)}</button>`).join('')}</div>
+    <div class="actions">${newWin ? '<button class="btn" id="bingo-claim">בינגו! 🎉</button>' : ''}<button class="btn ghost" id="bingo-new">כרטיס חדש</button></div>`;
+  $$('[data-b]', el).forEach((b) => (b.onclick = () => { const i = +b.dataset.b; c.on = c.on.includes(i) ? c.on.filter((x) => x !== i) : [...c.on, i]; ls.set('trip.bingo', JSON.stringify(c)); renderBingo(); }));
+  $('#bingo-claim', el)?.addEventListener('click', async () => {
+    if (!currentKid) return toast('בחרו למעלה מי משחק בטלפון הזה');
+    const res = await gemit('bingo:win', { kidId: currentKid });
+    if (res?.ok) { c.claimed.push(newWin.join()); ls.set('trip.bingo', JSON.stringify(c)); renderBingo(); }
+  });
+  $('#bingo-new', el).onclick = () => { ls.set('trip.bingo', null); renderBingo(); };
+}
+
+// ---------- read aloud (device voice) ----------
+function speak(text, btn) {
+  if (!('speechSynthesis' in window)) return toast('הדפדפן הזה לא תומך בהקראה');
+  if (speechSynthesis.speaking) { speechSynthesis.cancel(); if (btn) btn.textContent = '🔊 הקראה'; return; }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'he-IL'; u.rate = 0.95;
+  const v = speechSynthesis.getVoices().find((x) => x.lang?.startsWith('he'));
+  if (v) u.voice = v;
+  u.onend = () => { if (btn) btn.textContent = '🔊 הקראה'; };
+  if (btn) btn.textContent = '⏹ עצירה';
+  speechSynthesis.speak(u);
+}
