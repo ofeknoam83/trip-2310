@@ -172,6 +172,20 @@ io.on('connection', (socket) => {
           : await store.patch(coll, str(id, 40), clean);
         if (!doc) throw new Error('not found');
         io.emit('upsert', { coll, doc, by: online.get(socket.id) || null });
+      } else if (action === 'del' && coll === 'people') {
+        // Remove a participant and clear them from everything that points at them
+        const pid = str(id, 40);
+        if (!store.get('people', pid)) throw new Error('not found');
+        const by = online.get(socket.id) || null;
+        for (const t of store.all('tasks')) if (t.owners?.includes(pid)) {
+          io.emit('upsert', { coll: 'tasks', doc: await store.patch('tasks', t.id, { owners: t.owners.filter((x) => x !== pid) }), by });
+        }
+        for (const g of store.all('supplies')) if (g.bringer === pid || g.packedBy?.includes(pid)) {
+          io.emit('upsert', { coll: 'supplies', doc: await store.patch('supplies', g.id, { bringer: g.bringer === pid ? null : g.bringer, packedBy: (g.packedBy || []).filter((x) => x !== pid) }), by });
+        }
+        if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
+        await store.del('people', pid);
+        io.emit('remove', { coll: 'people', id: pid });
       } else if (action === 'del' && ['tasks', 'supplies', 'pins'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });

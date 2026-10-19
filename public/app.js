@@ -85,7 +85,12 @@ socket.on('upsert', ({ coll, doc, by }) => {
   if (by && by !== me) notifyChange(coll, prev, doc, by);
   renderColl(coll);
 });
-socket.on('remove', ({ coll, id }) => { S[coll].delete(id); renderColl(coll); });
+socket.on('remove', ({ coll, id }) => {
+  S[coll].delete(id);
+  if (coll === 'people' && id === me) { me = null; ls.set('trip.me', null); closeSheet(); showGate(); }
+  if (coll === 'people') renderGate();
+  renderColl(coll);
+});
 socket.on('presence', (ids) => { online = new Set(ids); updateOnlineLine(); renderAll(); });
 socket.on('photos:changed', ({ by }) => {
   photosStale = true;
@@ -447,6 +452,7 @@ function personSheet(p) {
       </div></div>
       <div class="actions"><button class="btn" type="submit">${isNew ? 'הוספה' : 'שמירה'}</button><button class="btn ghost" type="button" data-close>ביטול</button></div>
       ${!isNew && p.id === me ? `<button class="btn ghost block" type="button" id="switch-user" style="margin-top:10px">אני לא ${esc(firstName(p))} – החלפת משתמש</button>` : ''}
+      ${!isNew ? `<button class="btn danger block" type="button" id="remove-person" style="margin-top:10px">הסרת ${esc(firstName(p))} מהטיול</button>` : ''}
     </form>`, (root) => {
     const pv = () => ($('#pv', root).innerHTML = av({ ...d, id: '', avatar, color, name: $('[name=name]', root).value || d.name || '?' }, 72));
     pv();
@@ -462,6 +468,17 @@ function personSheet(p) {
     $$('#rsvp button', root).forEach((b) => (b.onclick = () => { rsvp = b.dataset.r; syncR(); }));
     $('[name=companions]', root).oninput = syncR;
     syncR();
+    $('#remove-person', root)?.addEventListener('click', async (e) => {
+      const b = e.currentTarget;
+      if (!b.dataset.armed) {
+        b.dataset.armed = '1'; b.textContent = `בטוח? ${firstName(p)} יוסר גם ממשימות, ציוד ומהמפה – לחצו שוב`;
+        setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = `הסרת ${firstName(p)} מהטיול`; } }, 4000);
+        return;
+      }
+      closeSheet();
+      await op('people', 'del', p.id);
+      toast(`${esc(firstName(p))} הוסר מהטיול`);
+    });
     $('#switch-user', root)?.addEventListener('click', () => { closeSheet(); me = null; ls.set('trip.me', null); showGate(); });
     $('#f', root).onsubmit = async (e) => {
       e.preventDefault();
