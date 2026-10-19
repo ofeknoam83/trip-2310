@@ -24,6 +24,10 @@ services:
         sync: false
       - key: LIVEKIT_API_SECRET
         sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        value: 1Bszs5Q0NJ7nxszIYlMg  # "Kenett"
 
 databases:
   - name: trip-2310-db

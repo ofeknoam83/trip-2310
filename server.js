@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -7,7 +8,6 @@ import { Server } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import { createStore } from './store.js';
 import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
-import { mountGames } from './games.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -18,6 +18,10 @@ const LIVEKIT_API_KEY = env('LIVEKIT_API_KEY');
 const LIVEKIT_API_SECRET = env('LIVEKIT_API_SECRET');
 const APPS_SCRIPT_URL = env('APPS_SCRIPT_URL');
 const DRIVE_FOLDER_URL = env('DRIVE_FOLDER_URL');
+const ELEVENLABS_API_KEY = env('ELEVENLABS_API_KEY');
+const ELEVENLABS_VOICE_ID = env('ELEVENLABS_VOICE_ID');
+const ELEVENLABS_MODEL = env('ELEVENLABS_MODEL') || 'eleven_v4';
+const ELEVENLABS_BASE = env('ELEVENLABS_API_BASE') || 'https://api.elevenlabs.io';
 
 const store = await createStore();
 const app = express();
@@ -64,11 +68,6 @@ const SHAPES = {
     ...(d.lat !== undefined && { lat: num(d.lat) }),
     ...(d.lng !== undefined && { lng: num(d.lng) }),
   }),
-  // Kids playing the games (points are only changed by the game engine)
-  kids: (d) => ({
-    ...(d.name !== undefined && { name: str(d.name, 30) }),
-    ...(d.parent !== undefined && { parent: str(d.parent, 40) }),
-  }),
   // One-line updates taken from the WhatsApp group (written by the scheduled sync)
   news: (d) => ({
     ...(d.text !== undefined && { text: str(d.text, 300) }),
@@ -87,6 +86,7 @@ app.get('/api/config', (_req, res) => {
     voice: !!(LIVEKIT_URL && LIVEKIT_API_KEY && LIVEKIT_API_SECRET),
     photos: !!APPS_SCRIPT_URL,
     driveFolderUrl: DRIVE_FOLDER_URL || '',
+    tts: !!(ELEVENLABS_API_KEY && ELEVENLABS_VOICE_ID),
     gearSheet: sheet.status,
   });
 });
@@ -146,6 +146,41 @@ app.post('/api/photos', async (req, res) => {
   }
 });
 
+// Narration of place overviews with an ElevenLabs voice. Each text is generated once and cached.
+const { PLACES, REGIONS } = await import('./public/places.js');
+const ttsInflight = new Map();
+app.get('/api/tts', async (req, res) => {
+  if (!ELEVENLABS_API_KEY || !ELEVENLABS_VOICE_ID) return res.status(503).json({ error: 'tts not configured' });
+  const subject = PLACES.find((p) => p.id === req.query.place) || REGIONS.find((g) => g.id === req.query.place);
+  const part = ['geo', 'history', 'kids', 'all'].includes(req.query.part) ? req.query.part : 'geo';
+  if (!subject) return res.status(404).json({ error: 'unknown place' });
+  const text = part === 'all' ? `${subject.name}. ${subject.geo} ${subject.history} ${subject.kids}` : `${subject.name}. ${subject[part]}`;
+  const key = 'tts-' + crypto.createHash('sha1').update([ELEVENLABS_VOICE_ID, ELEVENLABS_MODEL, text].join('|')).digest('hex');
+  try {
+    let mp3 = await store.blobGet(key);
+    if (!mp3) {
+      if (!ttsInflight.has(key)) {
+        ttsInflight.set(key, (async () => {
+          const r = await fetch(`${ELEVENLABS_BASE}/v1/text-to-speech/${encodeURIComponent(ELEVENLABS_VOICE_ID)}?output_format=mp3_44100_96`, {
+            method: 'POST',
+            headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+            body: JSON.stringify({ text, model_id: ELEVENLABS_MODEL, language_code: 'he' }),
+          });
+          if (!r.ok) throw new Error(`elevenlabs ${r.status}: ${(await r.text()).slice(0, 200)}`);
+          const buf = Buffer.from(await r.arrayBuffer());
+          await store.blobPut(key, buf);
+          return buf;
+        })().finally(() => setTimeout(() => ttsInflight.delete(key), 1000)));
+      }
+      mp3 = await ttsInflight.get(key);
+    }
+    res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=31536000, immutable' }).send(mp3);
+  } catch (e) {
+    console.error('[tts]', e.message);
+    res.status(502).json({ error: 'tts failed' });
+  }
+});
+
 app.get('/healthz', (_req, res) => res.send('ok'));
 
 // ---------- realtime ----------
@@ -156,7 +191,6 @@ app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.h
 
 const online = new Map(); // socket.id -> personId
 const sheet = startSheetSync({ store, io });
-mountGames({ io, store });
 
 async function callScript(body) {
   if (!APPS_SCRIPT_URL) throw new Error('script not configured');
@@ -192,13 +226,11 @@ io.on('connection', (socket) => {
         const base = coll === 'people'
           ? { name: 'אורח', companions: '', color: '#ff9e4a', avatar: '' }
           : coll === 'tasks' ? { owners: [], note: '', done: false }
-            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] }
-              : coll === 'kids' ? { points: 0, parent: by } : {};
+            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] } : {};
         if (coll === 'tasks' && !clean.title) throw new Error('missing title');
         if (coll === 'supplies' && !clean.item) throw new Error('missing item');
         if (coll === 'pins' && (clean.lat == null || clean.lng == null)) throw new Error('missing coords');
         if (coll === 'news' && !clean.text) throw new Error('missing text');
-        if (coll === 'kids' && !clean.name) throw new Error('missing name');
         doc = await store.put(coll, null, { ...base, ...clean, createdBy: by, createdAt: Date.now() });
         io.emit('upsert', { coll, doc, by: online.get(socket.id) || null });
       } else if (action === 'patch') {
@@ -221,7 +253,7 @@ io.on('connection', (socket) => {
         if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
         await store.del('people', pid);
         io.emit('remove', { coll: 'people', id: pid });
-      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'kids'].includes(coll)) {
+      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });
       } else throw new Error('bad action');

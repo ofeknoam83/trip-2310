@@ -1,4 +1,5 @@
-// מאגר מקומות דרומית לבאר שבע (+ ים המלח הדרומי ומדבר יהודה), לעבודה גם בלי קליטה.
+// מאגר מקומות בכל הארץ: דרומית לבאר שבע כאן, וצפונית לה ב־places-north.js. עובד גם בלי קליטה.
+import { REGIONS_N, PLACES_N } from './places-north.js';
 // r = רדיוס בק״מ שבו נחשבים "נמצאים במקום". הקואורדינטות משוערות.
 
 export const REGIONS = [
@@ -298,6 +299,9 @@ export const PLACES = [
     kids: 'אלמוגים הם בעלי חיים, לא אבנים – אז לא נוגעים בהם, כדי לא לפגוע בהם.',
   },
 ];
+
+REGIONS.push(...REGIONS_N);
+PLACES.push(...PLACES_N);
 
 // ---------- helpers ----------
 export function distKm(a, b) {

@@ -5,13 +5,13 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import * as seed from './seed.js';
 
-export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'kids'];
+export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news'];
 
 const newId = () => crypto.randomBytes(6).toString('base64url');
 
 export async function createStore() {
   const mem = Object.fromEntries(COLLECTIONS.map((c) => [c, new Map()]));
-  let persist;
+  let persist; let blob;
 
   if (process.env.DATABASE_URL) {
     const ssl = /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false };
@@ -30,6 +30,11 @@ export async function createStore() {
       updated_at timestamptz not null default now(), primary key (coll, id))`);
     const { rows } = await pool.query('select coll, id, data from docs');
     for (const r of rows) mem[r.coll]?.set(r.id, r.data);
+    await pool.query('create table if not exists blobs (key text primary key, data bytea not null, created_at timestamptz not null default now())');
+    blob = {
+      get: async (k) => (await pool.query('select data from blobs where key=$1', [k])).rows[0]?.data || null,
+      put: (k, buf) => pool.query('insert into blobs (key, data) values ($1,$2) on conflict (key) do update set data = excluded.data', [k, buf]),
+    };
     persist = {
       put: (c, id, d) => pool.query(
         `insert into docs (coll, id, data) values ($1,$2,$3)
@@ -52,6 +57,9 @@ export async function createStore() {
       }, 200);
     };
     persist = { put: async () => flush(), del: async () => flush() };
+    const dir = path.resolve(process.env.BLOB_DIR || './blobs'); fs.mkdirSync(dir, { recursive: true });
+    const fp = (k) => path.join(dir, k.replace(/[^a-z0-9_-]/gi, '_'));
+    blob = { get: async (k) => (fs.existsSync(fp(k)) ? fs.readFileSync(fp(k)) : null), put: async (k, b) => fs.writeFileSync(fp(k), b) };
     console.log(`[store] file ${file}`);
   }
 
@@ -72,6 +80,8 @@ export async function createStore() {
       return store.put(c, id, { ...cur, ...clean });
     },
     async del(c, id) { mem[c].delete(id); await persist.del(c, id); },
+    blobGet: (k) => blob.get(k),
+    blobPut: (k, b) => blob.put(k, b),
     snapshot() { return Object.fromEntries(COLLECTIONS.map((c) => [c, store.all(c)])); },
   };
 
