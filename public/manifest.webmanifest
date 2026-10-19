@@ -8,7 +8,42 @@
   "background_color": "#0f1733",
   "theme_color": "#0f1733",
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ]
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "file",
+          "accept": [
+            ".gpx",
+            ".kml",
+            ".kmz",
+            ".geojson",
+            "application/gpx+xml",
+            "application/vnd.google-earth.kml+xml",
+            "application/vnd.google-earth.kmz",
+            "application/xml",
+            "text/xml",
+            "application/octet-stream"
+          ]
+        }
+      ]
+    }
+  }
 }

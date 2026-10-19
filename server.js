@@ -8,6 +8,8 @@ import { Server } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import { createStore } from './store.js';
 import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
+import Busboy from 'busboy';
+import { parseRouteBytes, fetchRoute, sourceOf } from './routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -74,8 +76,12 @@ const SHAPES = {
     ...(d.who !== undefined && { who: str(d.who, 40) }),
     ...(d.source !== undefined && { source: str(d.source, 20) }),
   }),
+  // Navigation routes: geometry only comes from the import endpoint, here just the name
+  routes: (d) => ({
+    ...(d.name !== undefined && { name: str(d.name, 80) }),
+  }),
   info: (d) => Object.fromEntries(
-    ['title', 'dates', 'start', 'area', 'meeting', 'meetingTime', 'notes', 'waLast']
+    ['title', 'dates', 'start', 'area', 'meeting', 'meetingTime', 'notes', 'waLast', 'activeRoute']
       .filter((k) => d[k] !== undefined).map((k) => [k, str(d[k], 600)]),
   ),
 };
@@ -144,6 +150,72 @@ app.post('/api/photos', async (req, res) => {
     console.error('[photos] upload', e);
     res.status(502).json({ error: 'upload failed' });
   }
+});
+
+// ---------- navigation routes ----------
+const DEFAULT_ROUTE_URL = env('DEFAULT_ROUTE_URL') || 'https://off-road.io/track/6627619261120512';
+async function saveRoute(r, { by, source, url, activate = true }) {
+  const who = store.get('people', str(by, 40));
+  const doc = await store.put('routes', null, { ...r, source: source || 'file', url: url || '', createdBy: who?.id || 'guest', createdAt: Date.now() });
+  io.emit('upsert', { coll: 'routes', doc, by: who?.id || null });
+  if (!activate && store.get('info', 'main')?.activeRoute && store.get('routes', store.get('info', 'main').activeRoute)) return doc;
+  // The newest route becomes the active one
+  const infoDoc = store.get('info', 'main') ? await store.patch('info', 'main', { activeRoute: doc.id }) : await store.put('info', 'main', { activeRoute: doc.id });
+  io.emit('upsert', { coll: 'info', doc: infoDoc, by: who?.id || null });
+  return doc;
+}
+// Load the trip's default route once (deleting it later is respected). Retries until the source answers.
+async function ensureDefaultRoute() {
+  if (!DEFAULT_ROUTE_URL || store.get('info', 'main')?.defaultRouteUrl === DEFAULT_ROUTE_URL) return;
+  if (store.all('routes').some((r) => r.url === DEFAULT_ROUTE_URL)) return;
+  try {
+    const doc = await saveRoute(await fetchRoute(DEFAULT_ROUTE_URL), { source: sourceOf(DEFAULT_ROUTE_URL), url: DEFAULT_ROUTE_URL, activate: false });
+    const infoDoc = store.get('info', 'main') ? await store.patch('info', 'main', { defaultRouteUrl: DEFAULT_ROUTE_URL }) : await store.put('info', 'main', { defaultRouteUrl: DEFAULT_ROUTE_URL });
+    io.emit('upsert', { coll: 'info', doc: infoDoc, by: null });
+    console.log(`[routes] default route loaded: ${doc.name} (${doc.km} km)`);
+  } catch (e) {
+    console.warn('[routes] default route failed, retrying in 10 min:', e.message);
+    setTimeout(ensureDefaultRoute, 10 * 60e3);
+  }
+}
+setTimeout(ensureDefaultRoute, 3000);
+
+const ROUTE_HELP = {
+  amudanan: 'בעמוד ענן: פותחים את המסלול ← שמירה/ייצוא ← GPX, ומעלים כאן את הקובץ.',
+  offroad: 'באוף רוד: פותחים את המסלול ← שיתוף ← ייצוא קובץ GPX או KML, ומעלים כאן את הקובץ.',
+};
+app.post('/api/routes/import', async (req, res) => {
+  const { url, file, filename, by } = req.body || {};
+  try {
+    let r; let source = 'file';
+    if (typeof url === 'string' && url.trim()) { source = sourceOf(url); r = await fetchRoute(url); }
+    else if (typeof file === 'string' && file.length) r = parseRouteBytes(Buffer.from(file, 'base64'), str(filename, 80).replace(/\.[a-z]+$/i, ''));
+    else return res.status(400).json({ error: 'צריך קישור או קובץ' });
+    res.json({ ok: true, doc: await saveRoute(r, { by, source, url: source === 'file' ? '' : str(url, 500) }) });
+  } catch (e) {
+    const src = typeof url === 'string' ? sourceOf(url) : '';
+    const msg = e.code === 'NOFILE'
+      ? `לא הצלחתי לקרוא מסלול מהקישור הזה. ${ROUTE_HELP[src] || 'ייצאו מהאפליקציה קובץ GPX או KML והעלו אותו כאן.'}`
+      : e.name === 'TimeoutError' ? 'הקישור לא ענה בזמן' : e.message;
+    console.warn('[routes] import failed', e.message);
+    res.status(422).json({ error: msg });
+  }
+});
+// PWA share target: on Android, share a GPX/KML file or a link straight from Amud Anan / Off-Road to the app
+app.post('/share-target', (req, res) => {
+  const fields = {}; const files = [];
+  let bb;
+  try { bb = Busboy({ headers: req.headers, limits: { fileSize: 15e6, files: 3 } }); } catch { return res.redirect(303, '/#/map'); }
+  bb.on('field', (k, v) => { fields[k] = v; });
+  bb.on('file', (_k, stream, info) => { const chunks = []; stream.on('data', (c) => chunks.push(c)); stream.on('end', () => files.push({ name: info.filename, buf: Buffer.concat(chunks) })); });
+  bb.on('close', async () => {
+    let ok = false;
+    for (const f of files) { try { await saveRoute(parseRouteBytes(f.buf, (f.name || '').replace(/\.[a-z]+$/i, '')), { source: 'file' }); ok = true; break; } catch { /* next */ } }
+    const link = [fields.url, fields.text, fields.title].join(' ').match(/https?:\/\/\S+/)?.[0];
+    if (!ok && link) { try { await saveRoute(await fetchRoute(link), { source: sourceOf(link), url: link }); ok = true; } catch { /* fall through */ } }
+    res.redirect(303, ok ? '/#/map?route=ok' : `/#/map?route=fail${link ? `&link=${encodeURIComponent(link)}` : ''}`);
+  });
+  req.pipe(bb);
 });
 
 // Narration of place overviews with an ElevenLabs voice. Each text is generated once and cached.
@@ -219,6 +291,7 @@ io.on('connection', (socket) => {
   socket.on('op', async ({ coll, action, id, data } = {}, ack) => {
     try {
       if (!SHAPES[coll]) throw new Error('bad collection');
+      if (coll === 'routes' && action === 'add') throw new Error('routes are added by import');
       const clean = SHAPES[coll](data || {});
       let doc;
       if (action === 'add' && coll !== 'info') {
@@ -253,7 +326,7 @@ io.on('connection', (socket) => {
         if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
         await store.del('people', pid);
         io.emit('remove', { coll: 'people', id: pid });
-      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news'].includes(coll)) {
+      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'routes'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });
       } else throw new Error('bad action');

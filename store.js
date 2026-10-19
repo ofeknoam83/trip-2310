@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import * as seed from './seed.js';
 
-export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news'];
+export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes'];
 
 const newId = () => crypto.randomBytes(6).toString('base64url');
 

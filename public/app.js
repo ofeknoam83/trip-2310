@@ -39,7 +39,7 @@ function distKm(a, b) {
 const fmtDist = (km) => (km < 1 ? `${Math.round(km * 1000)} מ׳` : `${km.toFixed(km < 10 ? 1 : 0)} ק״מ`);
 
 // ---------- state ----------
-const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news'];
+const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes'];
 const S = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let me = ls.get('trip.me');
 let online = new Set();
@@ -79,6 +79,9 @@ socket.on('state', (snap) => {
   loaded = true;
   if (!me || !S.people.has(me)) { me = null; showGate(); } else hideGate();
   renderAll();
+  // Carry on navigating after a reload
+  const resume = ls.get('trip.nav');
+  if (resume && !nav && me && info().activeRoute === resume && S.routes.has(resume)) startNav();
 });
 socket.on('upsert', ({ coll, doc, by }) => {
   if (coll === 'locations' && !lastPos && doc.sharing && route === 'home') setTimeout(renderHome, 0);
@@ -135,7 +138,9 @@ function toast(html, p) {
 
 // ---------- routing ----------
 const ROUTES = ['home', 'tasks', 'gear', 'map', 'voice', 'photos'];
-let route = ROUTES.includes(location.hash.slice(2)) ? location.hash.slice(2) : 'home';
+const hashRoute = () => location.hash.slice(2).split('?')[0];
+const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '');
+let route = ROUTES.includes(hashRoute()) ? hashRoute() : 'home';
 const sections = {};
 function go(r) {
   if (!ROUTES.includes(r)) r = 'home';
@@ -147,7 +152,7 @@ function go(r) {
   if (r === 'photos' && (photosStale || !photos.length)) loadPhotos();
   window.scrollTo({ top: 0 });
 }
-window.addEventListener('hashchange', () => go(location.hash.slice(2)));
+window.addEventListener('hashchange', () => go(hashRoute()));
 document.addEventListener('click', (e) => {
   const g = e.target.closest('[data-go]');
   if (g) { e.preventDefault(); go(g.dataset.go); }
@@ -194,6 +199,7 @@ function mountSections() {
           <button class="icon-btn" id="map-layer" aria-label="החלף שכבת מפה">${ICON.layers}</button>
         </div>
       </div>
+      <div class="panel" id="route-panel"></div>
       <div class="panel">
         <div class="share-toggle">
           <button class="switch" id="share-switch" role="switch" aria-checked="false" aria-label="שיתוף מיקום"></button>
@@ -227,7 +233,7 @@ function mountSections() {
 // ---------- render dispatch ----------
 function renderAll() {
   if (!loaded) return;
-  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots();
+  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots(); renderRoutePanel(); drawRoute();
   if (route === 'photos') renderPhotos();
 }
 function renderColl(c) {
@@ -236,6 +242,10 @@ function renderColl(c) {
   if (c === 'supplies') { renderGear(); renderHome(); }
   if (c === 'info' || c === 'news') renderHome();
   if (c === 'locations' || c === 'pins') { updateMarkers(); renderWhere(); }
+  if (c === 'routes' || c === 'info') {
+    if (nav && (!S.routes.has(nav.id) || info().activeRoute !== nav.id)) stopNav(false);
+    renderRoutePanel(); drawRoute();
+  }
   renderDots();
 }
 function renderDots() {
@@ -897,8 +907,8 @@ function ensureMap() {
     maxZoom: 18, attribution: 'Imagery © Esri',
   });
   map.on('contextmenu', (e) => pinSheet(e.latlng));
-  updateMarkers();
-  fitAll(false);
+  updateMarkers(); drawRoute();
+  if (activeRoute() && ![...S.locations.values()].some((l) => l.sharing)) fitRoute(); else fitAll(false);
   setTimeout(() => map.invalidateSize(), 100);
 }
 function faceIcon(p, loc) {
@@ -987,6 +997,7 @@ function startShare() {
     lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, heading: pos.coords.heading, speed: pos.coords.speed };
     sendLoc(false);
     checkArrival(lastPos);
+    if (nav) navTick(lastPos);
     $('#share-status').textContent = `משתף · דיוק ${Math.round(pos.coords.accuracy)} מ׳`;
   }, (err) => {
     $('#share-status').textContent = err.code === 1 ? 'אין הרשאת מיקום. אפשרו מיקום לאתר בהגדרות הדפדפן.' : 'מחפש אות GPS…';
@@ -1052,6 +1063,292 @@ function renderWhere() {
   el.innerHTML = rows.join('');
 }
 setInterval(() => { if (route === 'map') { renderWhere(); updateMarkers(); } }, 30000);
+
+// ---------- navigation route (import + voice guidance) ----------
+const activeRoute = () => S.routes.get(info().activeRoute) || null;
+let routeLayer = null; let routeLayerId = null;
+let nav = null; // { id, cum, items, lastIdx, offCount, offSince, lastOffSay, done, nextKm, warnedSunset, mute, speeds }
+let navMute = ls.get('trip.navMute') === '1';
+const SRC_NAME = { amudanan: 'עמוד ענן', offroad: 'אוף רוד', israelhiking: 'מפת שבילי ישראל', mymaps: 'Google My Maps', link: 'קישור', file: 'קובץ' };
+
+// Local flat projection in metres around a reference latitude – accurate enough for a few km
+function proj(lat, lng, lat0) { const k = 111320; return [lng * k * Math.cos(lat0 * Math.PI / 180), lat * k]; }
+function cumOf(pts) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distKm({ lat: pts[i - 1][0], lng: pts[i - 1][1] }, { lat: pts[i][0], lng: pts[i][1] }) * 1000);
+  return cum;
+}
+// Nearest point on the route to pos: segment index, distance along the route and distance off it (metres)
+function snap(pts, cum, pos, from = 0, to = pts.length - 1) {
+  let best = { off: Infinity, idx: 0, along: 0, pt: pts[0] };
+  const [px, py] = proj(pos.lat, pos.lng, pos.lat);
+  for (let i = Math.max(0, from); i < Math.min(to, pts.length - 1); i++) {
+    const [ax, ay] = proj(pts[i][0], pts[i][1], pos.lat); const [bx, by] = proj(pts[i + 1][0], pts[i + 1][1], pos.lat);
+    const dx = bx - ax, dy = by - ay; const L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2)) : 0;
+    const cx = ax + t * dx, cy = ay + t * dy; const off = Math.hypot(px - cx, py - cy);
+    if (off < best.off) best = { off, idx: i, along: cum[i] + t * (cum[i + 1] - cum[i]), pt: [pts[i][0] + t * (pts[i + 1][0] - pts[i][0]), pts[i][1] + t * (pts[i + 1][1] - pts[i][1])] };
+  }
+  return best;
+}
+const DIRS = ['צפון', 'צפון־מזרח', 'מזרח', 'דרום־מזרח', 'דרום', 'דרום־מערב', 'מערב', 'צפון־מערב'];
+function bearing(a, b) {
+  const r = Math.PI / 180; const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+const dirName = (deg) => DIRS[Math.round(deg / 45) % 8];
+const sayDist = (m) => (m >= 950 ? `${(m / 1000).toFixed(m < 9500 ? 1 : 0).replace('.0', '')} קילומטר` : `${Math.max(50, Math.round(m / 50) * 50)} מטר`);
+const firstSentence = (s) => (String(s || '').match(/^[^.!?]*[.!?]/)?.[0] || String(s || '')).trim();
+
+// Sunset for a date and place (NOAA approximation), as a Date
+function sunsetAt(lat, lng, d = new Date()) {
+  const r = Math.PI / 180;
+  const day = Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(d.getFullYear(), 0, 0)) / 864e5);
+  const g = (2 * Math.PI / 365) * (day - 1 + 0.5);
+  const eq = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const ha = Math.acos(Math.cos(90.833 * r) / (Math.cos(lat * r) * Math.cos(decl)) - Math.tan(lat * r) * Math.tan(decl)) / r;
+  const mins = 720 - 4 * (lng - ha) - eq; // UTC minutes
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) + mins * 60e3);
+}
+const hhmm = (d) => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+
+// Everything worth announcing along the route: the file's own waypoints, our map pins, and known places near the line
+function routeItems(r, cum) {
+  const items = [];
+  const add = (it, maxOff) => { const s = snap(r.pts, cum, it); if (s.off <= maxOff) items.push({ ...it, along: s.along, off: s.off }); };
+  for (const w of r.wpts || []) add({ kind: 'wpt', name: w.name, desc: w.desc, lat: w.lat, lng: w.lng }, 800);
+  for (const p of S.pins.values()) add({ kind: 'pin', name: p.name, desc: (PIN_KINDS[p.kind] || PIN_KINDS.other)[1], lat: p.lat, lng: p.lng }, 400);
+  for (const p of PLACES) add({ kind: 'place', id: p.id, name: p.name, desc: firstSentence(p.geo), lat: p.lat, lng: p.lng }, Math.max(400, Math.min(p.r * 1000, 2500)));
+  items.sort((a, b) => a.along - b.along);
+  // Merge duplicates (same name, or a pin sitting on a waypoint)
+  return items.filter((it, i) => !items.slice(0, i).some((o) => Math.abs(o.along - it.along) < 80 && (o.name === it.name || it.kind !== 'place')));
+}
+
+let navQueue = [];
+function navSay(text, urgent = false) {
+  if (navMute || !('speechSynthesis' in window)) return;
+  if (urgent) { navQueue = []; speechSynthesis.cancel(); }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'he-IL'; u.rate = 1;
+  const v = speechSynthesis.getVoices().find((x) => x.lang?.startsWith('he')); if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+function startNav() {
+  const r = activeRoute(); if (!r) return toast('קודם טוענים ציר');
+  if (!me) return showGate();
+  const cum = cumOf(r.pts);
+  nav = { id: r.id, cum, items: routeItems(r, cum), lastIdx: null, offCount: 0, lastOffSay: 0, wasOff: false, nextKm: 5, warnedSunset: false, speeds: [], lastFix: null, gapSaid: 0, started: Date.now() };
+  ls.set('trip.nav', r.id);
+  if (!shareOn || watchId == null) startShare();
+  if (!wakeOn) { wakeOn = true; $('#wake-switch')?.setAttribute('aria-checked', 'true'); requestWake(); }
+  navSay(`מתחילים ניווט בציר ${r.name}. ${sayDist(r.km * 1000)}${nav.items.length ? `, ו־${nav.items.length} נקודות ציון בדרך` : ''}.`, true);
+  if (lastPos) navTick(lastPos, true);
+  renderNavBar(); renderRoutePanel();
+}
+function stopNav(said = true) {
+  if (!nav) return;
+  nav = null; ls.set('trip.nav', null);
+  if (said) navSay('הניווט הסתיים', true);
+  renderNavBar(); renderRoutePanel();
+}
+
+function navTick(pos, first = false) {
+  const r = nav && S.routes.get(nav.id); if (!r) return;
+  const { cum } = nav; const total = cum[cum.length - 1];
+  // Search near the last match while on the route, the whole route otherwise
+  let s = nav.lastIdx != null && !nav.wasOff ? snap(r.pts, cum, pos, nav.lastIdx - 40, nav.lastIdx + 400) : null;
+  if (!s || s.off > 120) s = snap(r.pts, cum, pos);
+  nav.lastIdx = s.idx; nav.along = s.along; nav.off = s.off; nav.pos = pos;
+  if (first) for (const it of nav.items) if (it.along < s.along - 50) it.done = it.a1 = it.a2 = true;
+
+  // Speed (moving average of real movement) for the ETA
+  if (nav.lastFix) {
+    const dt = (Date.now() - nav.lastFix.t) / 3600e3; const dk = distKm(nav.lastFix, pos);
+    if (dt > 0.003 && dk > 0.02) { nav.speeds.push(dk / dt); nav.speeds = nav.speeds.slice(-12); nav.lastFix = { ...pos, t: Date.now() }; }
+  } else nav.lastFix = { ...pos, t: Date.now() };
+
+  // Off the route
+  if (s.off > 150) {
+    nav.offCount++;
+    if (nav.offCount >= 2 && (!nav.wasOff || Date.now() - nav.lastOffSay > 90e3)) {
+      navSay(`שימו לב, ירדתם מהציר. הציר נמצא ${sayDist(s.off)} מכם, לכיוון ${dirName(bearing(pos, { lat: s.pt[0], lng: s.pt[1] }))}.`, true);
+      nav.wasOff = true; nav.lastOffSay = Date.now();
+    }
+  } else {
+    if (nav.wasOff && s.off < 70) { navSay('חזרתם לציר.'); nav.wasOff = false; }
+    nav.offCount = 0;
+  }
+
+  // Waypoints ahead
+  if (!nav.wasOff) for (const it of nav.items) {
+    if (it.done) continue;
+    const d = it.along - s.along;
+    const near = distKm(pos, it) * 1000;
+    if (d < -60 && near > 300) { it.done = true; continue; } // passed it
+    if (!it.a1 && d <= 1000 && d > 400) { it.a1 = true; navSay(`בעוד ${sayDist(d)}: ${it.name}.`); }
+    else if (!it.a2 && d <= 300 && d > 60) { it.a1 = it.a2 = true; navSay(`עוד ${sayDist(d)}: ${it.name}.`); }
+    else if (d <= 60 && near < Math.max(150, it.off + 80)) {
+      it.done = it.a1 = it.a2 = true;
+      const side = it.off > 120 ? ` ${it.name} נמצא ${sayDist(it.off)} מהציר, לכיוון ${dirName(bearing(pos, it))}.` : '';
+      navSay(`הגעתם: ${it.name}.${side} ${it.desc ? firstSentence(it.desc) : ''}`);
+    }
+  }
+
+  // Progress every 5 km
+  const doneKm = s.along / 1000; const leftKm = (total - s.along) / 1000;
+  if (doneKm >= nav.nextKm && leftKm > 1) { navSay(`עברתם ${Math.floor(doneKm)} קילומטר. נשארו ${sayDist(leftKm * 1000)}.`); nav.nextKm = Math.floor(doneKm / 5) * 5 + 5; }
+
+  // Sunset check
+  const speed = navSpeed();
+  const sunset = sunsetAt(pos.lat, pos.lng);
+  if (!nav.warnedSunset && leftKm > 2 && speed) {
+    const eta = new Date(Date.now() + (leftKm / speed) * 3600e3);
+    if (eta > new Date(sunset - 20 * 60e3) && Date.now() < +sunset) { nav.warnedSunset = true; navSay(`שימו לב: בקצב הנוכחי תסיימו בערך ב־${hhmm(eta)}, והשקיעה ב־${hhmm(sunset)}.`); }
+  }
+
+  // Convoy: whoever is in front hears when someone falls far behind
+  const others = [...S.locations.values()].filter((l) => l.id !== me && l.sharing && Date.now() - l.t < STALE_MS)
+    .map((l) => ({ l, s: snap(r.pts, cum, l) })).filter((x) => x.s.off < 500);
+  if (others.length && others.every((x) => x.s.along <= s.along)) {
+    const last = others.reduce((a, b) => (a.s.along < b.s.along ? a : b));
+    const gap = s.along - last.s.along;
+    if (gap > 2000 && Date.now() - nav.gapSaid > 10 * 60e3) { nav.gapSaid = Date.now(); navSay(`${firstName(person(last.l.id))} ${sayDist(gap)} מאחוריכם.`); }
+  }
+
+  // End of the route
+  if (total - s.along < 60 && distKm(pos, { lat: r.pts.at(-1)[0], lng: r.pts.at(-1)[1] }) * 1000 < 120) { navSay(`הגעתם לסוף הציר, ${r.name}. כל הכבוד!`, true); stopNav(false); return; }
+  renderNavBar();
+}
+function navSpeed() { const v = nav?.speeds || []; if (v.length < 3) return 0; const sorted = [...v].sort((a, b) => a - b); return sorted[Math.floor(sorted.length / 2)]; }
+
+function renderNavBar() {
+  let el = $('#nav-bar');
+  if (!nav) { el?.remove(); document.body.classList.remove('navigating'); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'nav-bar'; document.body.append(el); }
+  document.body.classList.add('navigating');
+  const r = S.routes.get(nav.id); const total = nav.cum.at(-1);
+  const along = nav.along || 0; const left = Math.max(0, total - along);
+  const next = nav.items.find((it) => !it.done && it.along >= along - 60);
+  const speed = navSpeed();
+  const eta = speed ? hhmm(new Date(Date.now() + (left / 1000 / speed) * 3600e3)) : null;
+  const sunset = nav.pos ? hhmm(sunsetAt(nav.pos.lat, nav.pos.lng)) : null;
+  const off = nav.off > 150;
+  el.className = off ? 'off' : '';
+  el.innerHTML = `
+    <div class="nav-main">
+      ${nav.pos == null ? '<b>מחפש מיקום GPS…</b>'
+        : off ? `<b>⚠️ מחוץ לציר · ${fmtDist(nav.off / 1000)}</b><small>הציר לכיוון ${dirName(bearing(nav.pos, (() => { const s = snap(r.pts, nav.cum, nav.pos); return { lat: s.pt[0], lng: s.pt[1] }; })()))}</small>`
+        : next ? `<b>${esc(next.name)}</b><small>בעוד ${fmtDist((next.along - along) / 1000)}</small>`
+        : `<b>${esc(r.name)}</b><small>אין עוד נקודות ציון עד הסוף</small>`}
+    </div>
+    <div class="nav-stats"><span>נשארו <b>${fmtDist(left / 1000)}</b></span>${eta ? `<span>הגעה ~<b>${eta}</b></span>` : ''}${sunset ? `<span>🌇 ${sunset}</span>` : ''}</div>
+    <div class="nav-prog"><i style="width:${Math.min(100, (along / total) * 100).toFixed(1)}%"></i></div>
+    <div class="nav-btns">
+      <button class="icon-btn" id="nav-mute" aria-label="${navMute ? 'הפעלת קול' : 'השתקה'}">${navMute ? '🔇' : '🔊'}</button>
+      <button class="icon-btn" id="nav-map" aria-label="למפה">🗺️</button>
+      <button class="icon-btn" id="nav-stop" aria-label="סיום ניווט">⏹</button>
+    </div>`;
+  $('#nav-mute', el).onclick = () => { navMute = !navMute; ls.set('trip.navMute', navMute ? '1' : null); if (navMute) speechSynthesis.cancel(); renderNavBar(); };
+  $('#nav-map', el).onclick = () => { go('map'); if (nav?.pos) map?.setView([nav.pos.lat, nav.pos.lng], 15); };
+  $('#nav-stop', el).onclick = () => stopNav();
+}
+
+function drawRoute() {
+  if (!map) return;
+  const r = activeRoute();
+  const key = r ? `${r.id}:${r.pts.length}` : null;
+  if (key === routeLayerId) return;
+  routeLayer?.remove(); routeLayer = null; routeLayerId = key;
+  if (!r) return;
+  const ll = r.pts.map(([a, b]) => [a, b]);
+  routeLayer = L.layerGroup([
+    L.polyline(ll, { color: '#140c06', weight: 9, opacity: 0.55, interactive: false }),
+    L.polyline(ll, { color: '#ff8a3d', weight: 5, opacity: 0.95, interactive: false }),
+    L.marker(ll[0], { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="route-end start">▶</div>' }) }).bindPopup(`<b>תחילת הציר</b><br>${esc(r.name)}`),
+    L.marker(ll.at(-1), { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="route-end">🏁</div>' }) }).bindPopup(`<b>סוף הציר</b><br>${esc(r.name)}`),
+    ...(r.wpts || []).map((w, i) => L.marker([w.lat, w.lng], { icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: `<div class="route-wpt">${i + 1}</div>` }) })
+      .bindPopup(`<b>${esc(w.name)}</b>${w.desc ? `<br><span class="small">${esc(w.desc)}</span>` : ''}`)),
+  ]).addTo(map);
+}
+function fitRoute() { const r = activeRoute(); if (map && r) map.fitBounds(r.pts, { padding: [30, 30] }); }
+
+function renderRoutePanel() {
+  const el = $('#route-panel'); if (!el) return;
+  const r = activeRoute(); const count = S.routes.size;
+  el.innerHTML = `
+    <div class="panel-head"><h2>ציר ניווט</h2>${count ? `<button class="btn small ghost" id="route-manage">${count > 1 ? `כל הצירים (${count})` : 'ניהול'}</button>` : ''}</div>
+    ${r ? `
+      <div class="route-card">
+        <div class="grow"><b>${esc(r.name)}</b>
+          <small>${fmtDist(r.km)} · ${(r.wpts || []).length} נקודות ציון · ${SRC_NAME[r.source] || 'קובץ'}${r.createdBy && person(r.createdBy) ? ` · ${esc(firstName(person(r.createdBy)))}` : ''}</small></div>
+        <button class="icon-btn" id="route-fit" aria-label="הצג את הציר">${ICON.all}</button>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        ${nav ? '<button class="btn danger" id="nav-toggle">⏹ סיום ניווט</button>' : '<button class="btn" id="nav-toggle">▶ התחלת ניווט קולי</button>'}
+      </div>
+      <p class="small muted" style="margin:10px 0 0">הקראה של נקודות הציון בדרך, מקומות מוכרים ליד הציר ונקודות שסימנתם במפה, התראה כשיורדים מהציר ובדיקת זמן מול השקיעה. הניווט משתף את המיקום שלך עם הקבוצה.</p>
+      <details class="route-add"><summary>טעינת ציר אחר</summary>${importForm()}</details>`
+    : importForm(true)}`;
+  bindImport(el);
+  $('#route-manage', el)?.addEventListener('click', routesSheet);
+  $('#route-fit', el)?.addEventListener('click', fitRoute);
+  $('#nav-toggle', el)?.addEventListener('click', () => (nav ? stopNav() : startNav()));
+}
+function importForm(intro = false) {
+  return `${intro ? '<p class="small muted" style="margin:0 0 10px">משתפים קישור למסלול מעמוד ענן, אוף רוד, מפת שבילי ישראל או Google My Maps, או מעלים קובץ GPX / KML. כולם יראו את הציר.</p>' : ''}
+    <form class="route-import">
+      <input class="input" name="url" type="url" inputmode="url" placeholder="הדבקת קישור למסלול" dir="ltr">
+      <button class="btn" type="submit">טעינה</button>
+    </form>
+    <label class="btn ghost small route-file">📂 העלאת קובץ GPX / KML<input type="file" accept=".gpx,.kml,.kmz,.geojson,.json,application/gpx+xml,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden></label>
+    <p class="small muted route-msg" hidden></p>`;
+}
+function bindImport(root) {
+  for (const f of $$('.route-import', root)) {
+    const msg = f.parentElement.querySelector('.route-msg');
+    f.onsubmit = (e) => { e.preventDefault(); const url = f.url.value.trim(); if (url) importRoute({ url }, f.querySelector('button'), msg); };
+    const file = f.parentElement.querySelector('.route-file input');
+    if (file) file.onchange = async () => {
+      const x = file.files[0]; if (!x) return;
+      if (x.size > 15e6) return toast('הקובץ גדול מדי');
+      const b64 = await new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.readAsDataURL(x); });
+      importRoute({ file: b64, filename: x.name }, file.parentElement, msg); file.value = '';
+    };
+  }
+}
+async function importRoute(body, btn, msg) {
+  const label = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = '⏳ טוען…'; }
+  if (msg) msg.hidden = true;
+  try {
+    const r = await fetch('/api/routes/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, by: me }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || 'הטעינה נכשלה');
+    toast(`🧭 נטען הציר "${esc(j.doc.name)}" · ${fmtDist(j.doc.km)}`);
+    S.routes.set(j.doc.id, j.doc); renderRoutePanel(); drawRoute(); fitRoute();
+  } catch (e) {
+    if (msg) { msg.textContent = e.message; msg.hidden = false; } else toast(esc(e.message));
+  } finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
+}
+function routesSheet() {
+  const list = [...S.routes.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const act = info().activeRoute;
+  openSheet(`<h3>צירי ניווט</h3>
+    <div class="route-list">${list.map((r) => `
+      <div class="who-row">
+        <div class="grow"><b>${esc(r.name)}</b><small>${fmtDist(r.km)} · ${SRC_NAME[r.source] || 'קובץ'} · ${ago(r.createdAt)}</small></div>
+        ${r.id === act ? '<span class="chip" aria-pressed="true">פעיל</span>' : `<button class="btn small" data-act="${esc(r.id)}">בחירה</button>`}
+        <button class="btn small ghost" data-ren="${esc(r.id)}">שינוי שם</button>
+        <button class="btn small danger" data-del="${esc(r.id)}">מחיקה</button>
+      </div>`).join('')}</div>
+    <div class="actions"><button class="btn ghost" data-close>סגירה</button></div>`, (root) => {
+    $$('[data-act]', root).forEach((b) => (b.onclick = async () => { if (nav) stopNav(false); await op('info', 'patch', 'main', { activeRoute: b.dataset.act }); closeSheet(); fitRoute(); }));
+    $$('[data-ren]', root).forEach((b) => (b.onclick = async () => { const r = S.routes.get(b.dataset.ren); const n = prompt('שם הציר', r?.name || ''); if (n?.trim()) { await op('routes', 'patch', b.dataset.ren, { name: n.trim() }); routesSheet(); } }));
+    $$('[data-del]', root).forEach((b) => (b.onclick = async () => { if (!confirmInline(b)) return; if (nav?.id === b.dataset.del) stopNav(false); await op('routes', 'del', b.dataset.del); routesSheet(); }));
+  });
+}
 
 // ---------- voice (LiveKit) ----------
 let room = null; let voiceMode = ls.get('trip.voiceMode') || 'ptt'; let talking = false; let connecting = false;
@@ -1305,6 +1602,11 @@ mountSections();
 go(route);
 fetch('/api/config').then((r) => r.json()).then((c) => { config = c; sheetStatus = c.gearSheet || null; renderGear(); renderVoice(); if (route === 'photos') loadPhotos(); else renderPhotos(); }).catch(() => {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if (hashQuery.get('route') === 'ok') setTimeout(() => toast('🧭 הציר נטען'), 800);
+if (hashQuery.get('route') === 'fail') setTimeout(() => {
+  toast('לא הצלחתי לקרוא מסלול ממה ששיתפתם. ייצאו קובץ GPX/KML ושתפו אותו.');
+  const u = $('#route-panel input[name=url]'); if (u && hashQuery.get('link')) u.value = hashQuery.get('link');
+}, 800);
 
 // ---------- read aloud (device voice) ----------
 let narr = null; // currently playing ElevenLabs audio

@@ -13,8 +13,10 @@
     "node": ">=20"
   },
   "dependencies": {
+    "busboy": "^1.6.0",
     "compression": "^1.7.5",
     "express": "^4.21.2",
+    "fflate": "^0.8.2",
     "livekit-server-sdk": "^2.9.7",
     "pg": "^8.13.1",
     "socket.io": "^4.8.1"
