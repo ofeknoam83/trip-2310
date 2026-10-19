@@ -250,7 +250,7 @@ textarea.input { min-height: 80px; resize: vertical; }
 /* ---------- map ---------- */
 .map-wrap { position: relative; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--line-2); margin-bottom: 14px; }
 #map { height: min(62dvh, 560px); background: #1b2244; }
-.map-tools { position: absolute; z-index: 500; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 8px; }
+.map-tools { position: absolute; z-index: 500; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; }
 .map-tools .icon-btn { background: var(--glass-strong); backdrop-filter: blur(10px); }
 .share-toggle { display: flex; align-items: center; gap: 12px; }
 .switch {

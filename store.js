@@ -16,6 +16,15 @@ export async function createStore() {
   if (process.env.DATABASE_URL) {
     const ssl = /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false };
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl, max: 5 });
+    pool.on('error', (e) => console.error('[store] pool error', e.message));
+    // The database may still be starting on first deploy – retry for up to ~2 minutes
+    for (let attempt = 1; ; attempt++) {
+      try { await pool.query('select 1'); break; } catch (e) {
+        if (attempt >= 24) throw e;
+        console.log(`[store] waiting for database (${e.code || e.message}), attempt ${attempt}`);
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
     await pool.query(`create table if not exists docs (
       coll text not null, id text not null, data jsonb not null,
       updated_at timestamptz not null default now(), primary key (coll, id))`);
