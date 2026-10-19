@@ -18,6 +18,7 @@ const ICON = {
   upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
   drive: '<svg viewBox="0 0 24 24"><path d="M8 3h8l6 10-4 7H6l-4-7 6-10zM2 13h20M8 3l6 10M16 3l-6 10"/></svg>',
   close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
 };
 
 function ago(t) {
@@ -159,7 +160,11 @@ function mountSections() {
     </section>
     <section id="sec-gear">
       <h1 class="page-title">רשימת ציוד</h1>
-      <p class="page-sub">מוסיפים מה צריך, ולוחצים ״אני מביא״ על מה שלוקחים.</p>
+      <div class="seg" id="gear-seg" role="group" aria-label="סוג ציוד">
+        <button data-scope="shared">ציוד לכולם <span class="n"></span></button>
+        <button data-scope="personal">ציוד אישי <span class="n"></span></button>
+      </div>
+      <p class="page-sub" id="gear-sub" style="margin-top:0"></p>
       <div class="panel" id="gear-progress"></div>
       <form class="add-bar" id="gear-form">
         <input class="input" name="item" placeholder="פריט, למשל: פטיש ליתדות" maxlength="140" autocomplete="off">
@@ -224,7 +229,7 @@ function renderColl(c) {
 }
 function renderDots() {
   const wanted = [...S.tasks.values()].filter((t) => !t.done && !t.owners?.length).length;
-  const unclaimed = [...S.supplies.values()].filter((s) => !s.bringer).length;
+  const unclaimed = [...S.supplies.values()].filter((s) => s.scope !== 'personal' && !s.bringer).length;
   const d1 = $('#dot-tasks'); d1.textContent = wanted; d1.classList.toggle('show', wanted > 0);
   const d2 = $('#dot-gear'); d2.textContent = unclaimed; d2.classList.toggle('show', unclaimed > 0);
   $('#dot-voice').classList.toggle('show', !!room);
@@ -236,16 +241,28 @@ function countCompanions(s) {
   if (!s?.trim()) return 0;
   return s.replace(/\s+ו(?=\S)/g, ',').split(/[,،+]/).map((x) => x.trim()).filter(Boolean).length;
 }
+const rsvpOf = (p) => p.rsvp || (p.companions?.trim() ? 'with' : 'unknown');
+const partySize = (p) => { const r = rsvpOf(p); return r === 'no' ? 0 : 1 + (r === 'with' ? countCompanions(p.companions) : 0); };
+function rsvpLine(p) {
+  const r = rsvpOf(p);
+  if (r === 'no') return 'לא מגיע';
+  if (r === 'solo') return 'מגיע לבד';
+  if (r === 'with') return p.companions?.trim() ? `מגיע עם ${esc(p.companions)} · ${partySize(p)} אנשים` : 'מגיע עם עוד אנשים';
+  return '<span style="color:var(--ember-2)">עוד לא עדכן</span>';
+}
 let countdownTimer;
 function renderHome() {
   const i = info();
   const ppl = sortedPeople();
-  const head = ppl.reduce((n, p) => n + 1 + countCompanions(p.companions), 0);
+  const head = ppl.reduce((n, p) => n + partySize(p), 0);
+  const pending = ppl.filter((p) => rsvpOf(p) === 'unknown').length;
   const tasks = [...S.tasks.values()];
   const supplies = [...S.supplies.values()];
   const openTasks = tasks.filter((t) => !t.done).length;
   const wanted = tasks.filter((t) => !t.done && !t.owners?.length).length;
-  const unclaimed = supplies.filter((s) => !s.bringer).length;
+  const unclaimed = supplies.filter((s) => s.scope !== 'personal' && !s.bringer).length;
+  const personalGear = supplies.filter((s) => s.scope === 'personal');
+  const myPacked = personalGear.filter((s) => (s.packedBy || []).includes(me)).length;
   const myTasks = tasks.filter((t) => !t.done && t.owners?.includes(me));
   const myGear = supplies.filter((s) => s.bringer === me);
   const row = (k, v) => `<dt>${k}</dt><dd class="${v ? '' : 'empty'}">${v ? esc(v) : 'עוד לא נקבע'}</dd>`;
@@ -260,7 +277,7 @@ function renderHome() {
 
     <div class="stats" style="margin-bottom:14px">
       <button class="stat" data-go="tasks"><b>${wanted}</b><span>משימות בלי אחראי, מתוך ${openTasks} פתוחות</span></button>
-      <button class="stat" data-go="gear"><b>${unclaimed}</b><span>פריטי ציוד שאף אחד עוד לא לקח</span></button>
+      <button class="stat" data-go="gear"><b>${unclaimed}</b><span>פריטי ציוד לכולם שאף אחד עוד לא לקח</span></button>
     </div>
 
     ${me ? `<div class="panel">
@@ -268,7 +285,8 @@ function renderHome() {
       ${myTasks.length || myGear.length ? `
         <dl class="kv">
           <dt>משימות</dt><dd class="${myTasks.length ? '' : 'empty'}">${myTasks.length ? myTasks.map((t) => esc(t.title)).join('\n') : 'אין'}</dd>
-          <dt>מביא</dt><dd class="${myGear.length ? '' : 'empty'}">${myGear.length ? myGear.map((s) => esc(s.item) + (s.qty ? ` (${esc(s.qty)})` : '')).join('\n') : 'כלום עדיין'}</dd>
+          <dt>מביא לכולם</dt><dd class="${myGear.length ? '' : 'empty'}">${myGear.length ? myGear.map((s) => esc(s.item) + (s.qty ? ` (${esc(s.qty)})` : '')).join('\n') : 'כלום עדיין'}</dd>
+          ${personalGear.length ? `<dt>ציוד אישי</dt><dd>ארזתי ${myPacked} מתוך ${personalGear.length}</dd>` : ''}
         </dl>` : `<p class="muted" style="margin:0 0 12px">עוד לא לקחת שום דבר.</p>
         <div style="display:flex;gap:8px"><button class="btn small" data-go="tasks">לקחת משימה</button><button class="btn small ghost" data-go="gear">להביא ציוד</button></div>`}
     </div>` : ''}
@@ -284,20 +302,20 @@ function renderHome() {
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h2>מי מגיע</h2><span><span class="headcount">${head}</span> <span class="small muted">אנשים בערך</span></span></div>
+      <div class="panel-head"><h2>מי מגיע</h2><span><span class="headcount">${head}</span> <span class="small muted">אנשים${pending ? ` · ${pending} עוד לא עדכנו` : ''}</span></span></div>
       ${ppl.map((p) => `
-        <div class="who-row">
+        <div class="who-row ${rsvpOf(p) === 'no' ? 'not-coming' : ''}">
           ${av(p, 44)}
           <div class="grow"><b>${esc(p.name)}${p.id === me ? ' <span class="small muted">(אני)</span>' : ''}</b>
-          <small>${p.companions ? 'מגיע עם ' + esc(p.companions) : 'מגיע לבד, או שעוד לא עדכן'}</small></div>
-          ${p.id === me ? `<button class="btn small ghost" data-act="profile">עריכה</button>` : ''}
+          <small>${rsvpLine(p)}</small></div>
+          <button class="btn small ghost" data-person="${esc(p.id)}">עריכה</button>
         </div>`).join('')}
       <button class="btn ghost block" id="add-person" style="margin-top:12px">${ICON.plus}הוספת משתתף</button>
     </div>`;
 
   $('#edit-info').onclick = editInfo;
   $('#add-person').onclick = () => personSheet(null);
-  $$('#sec-home [data-act="profile"]').forEach((b) => (b.onclick = () => personSheet(meP())));
+  $$('#sec-home [data-person]').forEach((b) => (b.onclick = () => personSheet(person(b.dataset.person))));
   tickCountdown();
   clearInterval(countdownTimer);
   countdownTimer = setInterval(tickCountdown, 30000);
@@ -407,8 +425,8 @@ async function squareAvatar(file) {
 
 function personSheet(p) {
   const isNew = !p;
-  const d = p || { name: '', companions: '', color: COLORS[S.people.size % COLORS.length], avatar: '' };
-  let avatar = d.avatar; let color = d.color;
+  const d = p || { name: '', companions: '', color: COLORS[S.people.size % COLORS.length], avatar: '', rsvp: 'unknown' };
+  let avatar = d.avatar; let color = d.color; let rsvp = rsvpOf(d);
   openSheet(`
     <h3>${isNew ? 'משתתף חדש' : p.id === me ? 'הפרופיל שלי' : esc(p.name)}</h3>
     <form id="f">
@@ -417,7 +435,13 @@ function personSheet(p) {
         <label class="btn small ghost">החלפת תמונה<input type="file" accept="image/*" id="pf" hidden></label>
       </div>
       <label class="field"><span>שם</span><input class="input" name="name" value="${esc(d.name)}" maxlength="40" required></label>
-      <label class="field"><span>מגיע עם</span><input class="input" name="companions" value="${esc(d.companions)}" placeholder="למשל: עמית, ונועה" maxlength="120"></label>
+      <div class="field"><span>מגיע?</span><div class="seg" id="rsvp" style="margin:0">
+        <button type="button" data-r="solo">לבד</button>
+        <button type="button" data-r="with">עם עוד אנשים</button>
+        <button type="button" data-r="no">לא מגיע</button>
+      </div></div>
+      <label class="field" id="comp-field"><span>מי מגיע איתו (שמות, מופרדים בפסיק)</span><input class="input" name="companions" value="${esc(d.companions)}" placeholder="למשל: עמית, נועה" maxlength="120"></label>
+      <p class="small muted" id="party" style="margin:-4px 0 12px"></p>
       <div class="field"><span>צבע על המפה</span><div style="display:flex;gap:10px;flex-wrap:wrap" id="sw">
         ${COLORS.map((c) => `<button type="button" data-c="${c}" aria-label="${c}" style="width:34px;height:34px;border-radius:50%;background:${c};box-shadow:${c === color ? '0 0 0 3px var(--sand)' : 'none'}"></button>`).join('')}
       </div></div>
@@ -429,10 +453,19 @@ function personSheet(p) {
     $('[name=name]', root).oninput = pv;
     $('#pf', root).onchange = async (e) => { const f = e.target.files[0]; if (f) { avatar = await squareAvatar(f); pv(); } };
     $$('#sw button', root).forEach((b) => (b.onclick = () => { color = b.dataset.c; $$('#sw button', root).forEach((x) => (x.style.boxShadow = x === b ? '0 0 0 3px var(--sand)' : 'none')); pv(); }));
+    const syncR = () => {
+      $$('#rsvp button', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.r === rsvp));
+      $('#comp-field', root).hidden = rsvp !== 'with';
+      const n = partySize({ rsvp, companions: $('[name=companions]', root).value });
+      $('#party', root).textContent = rsvp === 'unknown' ? 'בחרו אם מגיע.' : rsvp === 'no' ? 'לא נספר במספר האנשים.' : `נספר כ־${n} ${n === 1 ? 'איש' : 'אנשים'}.`;
+    };
+    $$('#rsvp button', root).forEach((b) => (b.onclick = () => { rsvp = b.dataset.r; syncR(); }));
+    $('[name=companions]', root).oninput = syncR;
+    syncR();
     $('#switch-user', root)?.addEventListener('click', () => { closeSheet(); me = null; ls.set('trip.me', null); showGate(); });
     $('#f', root).onsubmit = async (e) => {
       e.preventDefault();
-      const data = { name: e.target.name.value, companions: e.target.companions.value, color, avatar };
+      const data = { name: e.target.name.value, companions: rsvp === 'with' ? e.target.companions.value : '', rsvp, color, avatar };
       closeSheet();
       await op('people', isNew ? 'add' : 'patch', p?.id, data);
     };
@@ -477,10 +510,11 @@ function bindTasks() {
     const rowEl = e.target.closest('.row'); if (!rowEl) return;
     const t = S.tasks.get(rowEl.dataset.id); if (!t) return;
     if (e.target.closest('.check')) return op('tasks', 'patch', t.id, { done: !t.done });
+    const del = e.target.closest('.mini.del');
+    if (del) { if (confirmInline(del)) op('tasks', 'del', t.id); return; }
     if (e.target.closest('.take')) {
       if (!me) return showGate();
-      const owners = t.owners?.includes(me) ? t.owners.filter((x) => x !== me) : [...(t.owners || []), me];
-      return op('tasks', 'patch', t.id, { owners });
+      return toggleIn('tasks', t.id, 'owners', me);
     }
     taskSheet(t);
   });
@@ -506,10 +540,12 @@ function renderTasks() {
     return `<div class="row ${t.done ? 'done' : ''} ${wanted ? 'wanted' : ''}" data-id="${esc(t.id)}">
       <button class="check" role="checkbox" aria-checked="${!!t.done}" aria-label="בוצע">${ICON.check}</button>
       <div class="grow"><span class="title">${esc(t.title)}</span>
-        ${wanted ? '<span class="wanted-tag">מחפשת מתנדב</span>' : t.owners?.length ? `<span class="meta">${t.owners.map((o) => esc(firstName(person(o)))).join(', ')}</span>` : ''}
+        ${wanted ? '<span class="wanted-tag">מחפשת מתנדב</span>' : t.owners?.length ? `<span class="owners"><span class="stack">${t.owners.map((o) => av(person(o), 22)).join('')}</span><span class="meta">${t.owners.map((o) => esc(firstName(person(o)))).join(', ')}</span></span>` : ''}
         ${t.note ? `<div class="meta">${esc(t.note)}</div>` : ''}</div>
-      <div class="stack">${(t.owners || []).map((o) => av(person(o), 28)).join('')}</div>
-      ${t.done ? '' : `<button class="take ${mine ? 'mine' : ''}">${mine ? 'שלי' : 'אני לוקח'}</button>`}
+      <div class="row-side">
+        ${t.done ? '' : `<button class="take ${mine ? 'mine' : ''}">${mine ? 'שלי' : 'אני לוקח'}</button>`}
+        <div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div>
+      </div>
     </div>`;
   }).join('') : `<div class="empty-state">${taskFilter === 'mine' ? 'עוד לא לקחת משימה. עברו ל״בלי אחראי״ ובחרו אחת.' : 'אין משימות כאן. הוסיפו אחת למעלה.'}</div>`;
 }
@@ -535,46 +571,107 @@ function taskSheet(t) {
 // Two-tap delete instead of a blocking confirm() dialog
 function confirmInline(btn) {
   if (btn.dataset.armed) return true;
-  btn.dataset.armed = '1'; btn.textContent = 'בטוח? לחצו שוב';
-  setTimeout(() => { delete btn.dataset.armed; btn.textContent = 'מחיקה'; }, 3000);
+  const orig = btn.innerHTML;
+  btn.dataset.armed = '1'; btn.textContent = btn.classList.contains('mini') ? 'למחוק?' : 'בטוח? לחצו שוב';
+  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.innerHTML = orig; } }, 3000);
   return false;
 }
 
 // ---------- gear ----------
+// Two lists: shared gear (one person brings it for everyone) and personal gear (everyone brings their own).
+let gearScope = ls.get('trip.gearScope') === 'personal' ? 'personal' : 'shared';
 let gearFilter = 'all';
-const gearCats = () => [...new Set([...S.supplies.values()].map((s) => s.cat || 'כללי'))];
+const scopeOf = (s) => (s.scope === 'personal' ? 'personal' : 'shared');
+const gearOf = (scope) => [...S.supplies.values()].filter((s) => scopeOf(s) === scope);
+const gearCats = (scope) => [...new Set(gearOf(scope).map((s) => s.cat || 'כללי'))];
+const packedByMe = (s) => (s.packedBy || []).includes(me);
+
+function toggleIn(coll, id, field, value) {
+  socket.timeout(15000).emit('toggle', { coll, id, field, value }, (err, res) => {
+    if (err) toast('אין קליטה כרגע – השינוי יישלח כשהחיבור יחזור');
+    else if (!res?.ok) toast('לא נשמר: ' + (res?.error || 'שגיאה'));
+  });
+}
+
 function bindGear() {
+  $('#gear-seg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-scope]'); if (!b) return;
+    gearScope = b.dataset.scope; gearFilter = 'all'; ls.set('trip.gearScope', gearScope); renderGear();
+  });
   $('#gear-form').onsubmit = async (e) => {
     e.preventDefault();
     const item = e.target.item.value.trim(); if (!item) return;
     e.target.item.value = '';
-    await op('supplies', 'add', null, { item, cat: 'כללי' });
+    await op('supplies', 'add', null, { item, cat: gearScope === 'personal' ? 'אישי' : 'כללי', scope: gearScope });
   };
   $('#gear-list').addEventListener('click', async (e) => {
     const rowEl = e.target.closest('.row'); if (!rowEl) return;
     const s = S.supplies.get(rowEl.dataset.id); if (!s) return;
+    const del = e.target.closest('.mini.del');
+    if (del) { if (confirmInline(del)) op('supplies', 'del', s.id); return; }
+    if (scopeOf(s) === 'personal') {
+      if (e.target.closest('.check')) { if (!me) return showGate(); return toggleIn('supplies', s.id, 'packedBy', me); }
+      return gearSheet(s);
+    }
     if (e.target.closest('.check')) return op('supplies', 'patch', s.id, { done: !s.done });
     if (e.target.closest('.take')) {
       if (!me) return showGate();
+      if (s.bringer && s.bringer !== me) return op('supplies', 'add', null, { item: s.item, cat: s.cat, qty: s.qty, bringer: me, scope: 'shared' });
       return op('supplies', 'patch', s.id, { bringer: s.bringer === me ? null : me });
     }
     gearSheet(s);
   });
 }
+
 function renderGear() {
-  const all = [...S.supplies.values()];
-  const claimed = all.filter((s) => s.bringer).length;
-  const packed = all.filter((s) => s.done).length;
+  $$('#gear-seg button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.scope === gearScope));
+  const shared = gearOf('shared'); const personal = gearOf('personal');
+  $('#gear-seg [data-scope=shared] .n').textContent = shared.length;
+  $('#gear-seg [data-scope=personal] .n').textContent = personal.length;
+  const input = $('#gear-form input');
+  input.placeholder = gearScope === 'personal' ? 'מה כל אחד צריך להביא? למשל: כפפות' : 'מה צריך לקבוצה? למשל: פטיש ליתדות';
+  $('#gear-sub').textContent = gearScope === 'personal'
+    ? 'כל אחד מביא לעצמו. מסמנים ✓ על מה שארזתם – כל אחד רואה רק את הסימון שלו.'
+    : 'ציוד לכולם: מישהו אחד מביא לכל הקבוצה. לוחצים ״אני מביא״ על מה שלוקחים.';
+
+  if (gearScope === 'personal') {
+    const mine = personal.filter(packedByMe).length;
+    const others = sortedPeople().length;
+    $('#gear-progress').innerHTML = `
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>ארזתי</span><span>${mine} מתוך ${personal.length}</span></div>
+      <div class="progress"><i style="width:${personal.length ? (mine / personal.length) * 100 : 0}%"></i></div>
+      <div class="small muted" style="margin-top:6px">${mine === personal.length && personal.length ? 'הכול ארוז. אפשר לצאת!' : 'הסימון שלך אישי. ליד כל פריט רואים כמה מתוך ' + others + ' כבר ארזו.'}</div>`;
+    const labels = { all: 'הכול', todo: 'עוד לא ארזתי' };
+    const counts = { all: personal.length, todo: personal.filter((s) => !packedByMe(s)).length };
+    $('#gear-chips').innerHTML = Object.keys(labels).map((k) => `<button class="chip" data-f="${k}" aria-pressed="${gearFilter === k}">${labels[k]} ${counts[k]}</button>`).join('');
+    $$('#gear-chips .chip').forEach((c) => (c.onclick = () => { gearFilter = c.dataset.f; renderGear(); }));
+    const list = personal.filter((s) => gearFilter === 'all' || !packedByMe(s)).sort((a, b) => (packedByMe(a) - packedByMe(b)) || (a.createdAt - b.createdAt));
+    $('#gear-list').innerHTML = list.length ? `<div class="list">${list.map((s) => {
+      const packed = packedByMe(s);
+      const who = (s.packedBy || []).filter((id) => S.people.has(id));
+      return `<div class="row ${packed ? 'done' : ''}" data-id="${esc(s.id)}">
+        <button class="check" role="checkbox" aria-checked="${packed}" aria-label="ארזתי">${ICON.check}</button>
+        <div class="grow"><span class="title">${esc(s.item)}${s.qty ? ` <span class="meta">× ${esc(s.qty)}</span>` : ''}</span>
+          ${who.length ? `<span class="owners"><span class="stack">${who.slice(0, 6).map((id) => av(person(id), 22)).join('')}</span><span class="meta">${who.length} ארזו</span></span>` : '<span class="meta">אף אחד עוד לא ארז</span>'}</div>
+        <div class="row-side"><div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div></div>
+      </div>`;
+    }).join('')}</div>` : `<div class="empty-state">${gearFilter === 'todo' ? 'ארזת הכול!' : 'אין עדיין ציוד אישי. הוסיפו פריט למעלה.'}</div>`;
+    return;
+  }
+
+  const claimed = shared.filter((s) => s.bringer).length;
+  const packed = shared.filter((s) => s.done).length;
   $('#gear-progress').innerHTML = `
-    <div style="display:flex;justify-content:space-between;font-weight:700"><span>יש מי שמביא</span><span>${claimed} מתוך ${all.length}</span></div>
-    <div class="progress"><i style="width:${all.length ? (claimed / all.length) * 100 : 0}%"></i></div>
+    <div style="display:flex;justify-content:space-between;font-weight:700"><span>יש מי שמביא</span><span>${claimed} מתוך ${shared.length}</span></div>
+    <div class="progress"><i style="width:${shared.length ? (claimed / shared.length) * 100 : 0}%"></i></div>
     <div class="small muted" style="margin-top:6px">${packed} פריטים כבר ארוזים</div>`;
   const labels = { all: 'הכול', none: 'בלי מביא', mine: 'מה אני מביא' };
-  const counts = { all: all.length, none: all.filter((s) => !s.bringer).length, mine: all.filter((s) => s.bringer === me).length };
+  const counts = { all: shared.length, none: shared.filter((s) => !s.bringer).length, mine: shared.filter((s) => s.bringer === me).length };
+  if (!labels[gearFilter]) gearFilter = 'all';
   $('#gear-chips').innerHTML = Object.keys(labels).map((k) => `<button class="chip" data-f="${k}" aria-pressed="${gearFilter === k}">${labels[k]} ${counts[k]}</button>`).join('');
   $$('#gear-chips .chip').forEach((c) => (c.onclick = () => { gearFilter = c.dataset.f; renderGear(); }));
-  const list = all.filter((s) => gearFilter === 'all' || (gearFilter === 'none' && !s.bringer) || (gearFilter === 'mine' && s.bringer === me));
-  const cats = gearCats().filter((c) => list.some((s) => (s.cat || 'כללי') === c));
+  const list = shared.filter((s) => gearFilter === 'all' || (gearFilter === 'none' && !s.bringer) || (gearFilter === 'mine' && s.bringer === me));
+  const cats = gearCats('shared').filter((c) => list.some((s) => (s.cat || 'כללי') === c));
   $('#gear-list').innerHTML = cats.length ? cats.map((c) => `
     <h3 class="cat-title">${esc(c)}</h3>
     <div class="list">${list.filter((s) => (s.cat || 'כללי') === c).sort((a, b) => (a.done - b.done) || (a.createdAt - b.createdAt)).map((s) => {
@@ -582,42 +679,51 @@ function renderGear() {
       return `<div class="row ${s.done ? 'done' : ''} ${!s.bringer ? 'wanted' : ''}" data-id="${esc(s.id)}">
         <button class="check" role="checkbox" aria-checked="${!!s.done}" aria-label="ארוז">${ICON.check}</button>
         <div class="grow"><span class="title">${esc(s.item)}${s.qty ? ` <span class="meta">× ${esc(s.qty)}</span>` : ''}</span>
-          ${s.bringer ? `<span class="meta">${esc(firstName(person(s.bringer)))} מביא</span>` : '<span class="wanted-tag">צריך מישהו שיביא</span>'}</div>
-        ${s.bringer && !mine ? av(person(s.bringer), 30) : ''}
-        <button class="take ${mine ? 'mine' : ''}">${mine ? 'אני מביא' : s.bringer ? 'גם אני' : 'אני מביא'}</button>
+          ${s.bringer ? `<span class="owners">${av(person(s.bringer), 22)}<span class="meta">${esc(firstName(person(s.bringer)))} מביא</span></span>` : '<span class="wanted-tag">צריך מישהו שיביא</span>'}</div>
+        <div class="row-side">
+          <button class="take ${mine ? 'mine' : ''}">${mine ? 'אני מביא' : s.bringer ? 'גם אני' : 'אני מביא'}</button>
+          <div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div>
+        </div>
       </div>`;
     }).join('')}</div>`).join('') : `<div class="empty-state">${gearFilter === 'mine' ? 'עוד לא לקחת שום ציוד.' : 'הרשימה ריקה. הוסיפו פריט למעלה.'}</div>`;
-  // "גם אני" on an item someone else brings: duplicate it for me
-  $$('#gear-list .take').forEach((b) => {
-    const s = S.supplies.get(b.closest('.row').dataset.id);
-    if (s?.bringer && s.bringer !== me) b.onclick = async (e) => {
-      e.stopPropagation();
-      if (!me) return showGate();
-      await op('supplies', 'add', null, { item: s.item, cat: s.cat, qty: s.qty, bringer: me });
-    };
-  });
 }
+
 function gearSheet(s) {
   const bringer = s.bringer ? [s.bringer] : [];
-  const cats = gearCats();
+  let scope = scopeOf(s);
+  const cats = gearCats(scope);
   openSheet(`
     <h3>עריכת פריט</h3>
     <form id="f">
       <label class="field"><span>פריט</span><input class="input" name="item" value="${esc(s.item)}" maxlength="140" required></label>
+      <div class="field"><span>סוג</span><div class="seg" id="scope-seg" style="margin:0">
+        <button type="button" data-scope="shared" aria-pressed="${scope === 'shared'}">ציוד לכולם</button>
+        <button type="button" data-scope="personal" aria-pressed="${scope === 'personal'}">ציוד אישי</button>
+      </div></div>
       <div style="display:flex;gap:10px">
         <label class="field" style="flex:1"><span>כמות</span><input class="input" name="qty" value="${esc(s.qty)}" maxlength="30" placeholder="למשל: 2"></label>
-        <label class="field" style="flex:2"><span>קטגוריה</span><input class="input" name="cat" value="${esc(s.cat || 'כללי')}" list="cats" maxlength="30"></label>
+        <label class="field" style="flex:2" id="cat-field"><span>קטגוריה</span><input class="input" name="cat" value="${esc(s.cat || 'כללי')}" list="cats" maxlength="30"></label>
         <datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
       </div>
-      <div class="field"><span>מי מביא</span>${peoplePicker(bringer, false)}</div>
+      <div class="field" id="bringer-field"><span>מי מביא</span>${peoplePicker(bringer, false)}</div>
       <div class="actions"><button class="btn" type="submit">שמירה</button><button class="btn danger" type="button" id="del">מחיקה</button></div>
     </form>`, (root) => {
     bindPicker(root, bringer, false);
+    const sync = () => {
+      $$('#scope-seg button', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.scope === scope));
+      $('#bringer-field', root).hidden = scope === 'personal';
+      $('#cat-field', root).hidden = scope === 'personal';
+    };
+    $$('#scope-seg button', root).forEach((b) => (b.onclick = () => { scope = b.dataset.scope; sync(); }));
+    sync();
     $('#del', root).onclick = async () => { if (confirmInline($('#del', root))) { closeSheet(); await op('supplies', 'del', s.id); } };
     $('#f', root).onsubmit = async (e) => {
       e.preventDefault();
       closeSheet();
-      await op('supplies', 'patch', s.id, { item: e.target.item.value, qty: e.target.qty.value, cat: e.target.cat.value, bringer: bringer[0] || null });
+      const data = { item: e.target.item.value, qty: e.target.qty.value, scope };
+      if (scope === 'shared') Object.assign(data, { cat: e.target.cat.value, bringer: bringer[0] || null });
+      else Object.assign(data, { cat: 'אישי', bringer: null });
+      await op('supplies', 'patch', s.id, data);
     };
   });
 }

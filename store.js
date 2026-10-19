@@ -80,8 +80,28 @@ export async function createStore() {
     for (const p of seed.people) { const { id, ...d } = p; await store.put('people', id, d); }
     for (const t of seed.tasks) await store.put('tasks', null, t);
     for (const s of seed.supplies) await store.put('supplies', null, s);
-    await store.put('info', 'main', seed.info);
+    for (const s of seed.personalSupplies) await store.put('supplies', null, s);
+    await store.put('info', 'main', { ...seed.info, gearV2: true });
     console.log('[store] seeded');
+  } else {
+    // One-time: split gear into shared and personal lists
+    if (!mem.info.get('main')?.gearV2) {
+      const toPersonal = ['שקי שינה ומזרנים', 'פנסי ראש + סוללות', 'מים – 6 ליטר לאדם ליום'];
+      for (const s of store.all('supplies')) {
+        if (s.scope) continue;
+        if (toPersonal.includes(s.item) && !s.bringer) await store.del('supplies', s.id);
+        else await store.patch('supplies', s.id, { scope: 'shared', packedBy: s.packedBy || [] });
+      }
+      const have = new Set(store.all('supplies').map((s) => s.item));
+      for (const s of seed.personalSupplies) if (!have.has(s.item)) await store.put('supplies', null, s);
+      await store.patch('info', 'main', { gearV2: true });
+      console.log('[store] gear split into shared/personal');
+    }
+    // Fill in avatars that were added to the seed later, unless the person already set one
+    for (const p of seed.people) {
+      const cur = mem.people.get(p.id);
+      if (cur && !cur.avatar && p.avatar) await store.patch('people', p.id, { avatar: p.avatar });
+    }
   }
   return store;
 }

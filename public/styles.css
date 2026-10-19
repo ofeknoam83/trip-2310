@@ -138,6 +138,7 @@ img { display: block; }
 .hero .when { color: var(--ember-2); font-weight: 700; font-size: 15px; }
 .countdown {
   display: flex; align-items: flex-end; gap: 14px; margin: 8px 0 4px;
+  direction: ltr; justify-content: flex-end;
   font-family: var(--display); line-height: .8;
 }
 .countdown .unit { display: flex; flex-direction: column; align-items: center; }
@@ -160,6 +161,8 @@ img { display: block; }
 .who-row .grow { flex: 1; min-width: 0; }
 .who-row b { display: block; }
 .who-row small { color: var(--sand-dim); }
+.who-row.not-coming { opacity: .5; }
+.who-row .btn.small { flex: none; }
 .headcount { font-family: var(--display); font-size: 34px; color: var(--moon); line-height: 1; }
 
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -241,6 +244,17 @@ textarea.input { min-height: 80px; resize: vertical; }
   color: var(--ember-2); border: 1px dashed rgba(255, 179, 107, .6);
 }
 .take.mine { color: var(--moon); border: 1px solid rgba(127, 224, 210, .6); }
+.row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+.row-tools { display: flex; gap: 4px; }
+.mini {
+  min-width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+  color: var(--sand-dim); background: rgba(243, 234, 217, .06); border: 1px solid var(--line);
+}
+.mini svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.mini.del { color: var(--rose); }
+.mini.del[data-armed] { background: var(--rose); color: #fff; padding: 0 8px; font-size: 12px; font-weight: 800; }
+.owners { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.owners .stack .av, .owners > .av { --s: 22px; font-size: 10px; }
 .cat-title { font-family: var(--display); font-size: 26px; margin: 18px 4px 8px; color: var(--sand-dim); }
 .cat-title:first-child { margin-top: 0; }
 .progress { height: 8px; border-radius: 99px; background: rgba(243, 234, 217, .1); overflow: hidden; margin: 6px 0 2px; }

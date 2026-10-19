@@ -9,10 +9,13 @@ import { createStore } from './store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
-const {
-  LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
-  APPS_SCRIPT_URL, DRIVE_FOLDER_URL,
-} = process.env;
+// Trim env values: pasted keys often carry a trailing newline or space, which breaks token signing
+const env = (k) => (process.env[k] || '').trim();
+const LIVEKIT_URL = env('LIVEKIT_URL');
+const LIVEKIT_API_KEY = env('LIVEKIT_API_KEY');
+const LIVEKIT_API_SECRET = env('LIVEKIT_API_SECRET');
+const APPS_SCRIPT_URL = env('APPS_SCRIPT_URL');
+const DRIVE_FOLDER_URL = env('DRIVE_FOLDER_URL');
 
 const store = await createStore();
 const app = express();
@@ -36,6 +39,7 @@ const SHAPES = {
         ? d.avatar.slice(0, 80000) : '',
     }),
     ...(d.phone !== undefined && { phone: str(d.phone, 20) }),
+    ...(d.rsvp !== undefined && { rsvp: ['unknown', 'solo', 'with', 'no'].includes(d.rsvp) ? d.rsvp : 'unknown' }),
   }),
   tasks: (d) => ({
     ...(d.title !== undefined && { title: str(d.title, 140) }),
@@ -49,6 +53,8 @@ const SHAPES = {
     ...(d.cat !== undefined && { cat: str(d.cat, 30) || 'כללי' }),
     ...(d.bringer !== undefined && { bringer: typeof d.bringer === 'string' ? d.bringer.slice(0, 40) : null }),
     ...(d.done !== undefined && { done: !!d.done }),
+    ...(d.scope !== undefined && { scope: d.scope === 'personal' ? 'personal' : 'shared' }),
+    ...(d.packedBy !== undefined && { packedBy: ids(d.packedBy) }),
   }),
   pins: (d) => ({
     ...(d.name !== undefined && { name: str(d.name, 60) }),
@@ -154,7 +160,7 @@ io.on('connection', (socket) => {
         const base = coll === 'people'
           ? { name: 'אורח', companions: '', color: '#ff9e4a', avatar: '' }
           : coll === 'tasks' ? { owners: [], note: '', done: false }
-            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false } : {};
+            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] } : {};
         if (coll === 'tasks' && !clean.title) throw new Error('missing title');
         if (coll === 'supplies' && !clean.item) throw new Error('missing item');
         if (coll === 'pins' && (clean.lat == null || clean.lng == null)) throw new Error('missing coords');
@@ -174,6 +180,21 @@ io.on('connection', (socket) => {
     } catch (e) {
       ack?.({ ok: false, error: e.message });
     }
+  });
+
+  // Atomic add/remove of one id in an array field (who packed an item, who owns a task)
+  const TOGGLES = { supplies: ['packedBy'], tasks: ['owners'] };
+  socket.on('toggle', async ({ coll, id, field, value } = {}, ack) => {
+    try {
+      if (!TOGGLES[coll]?.includes(field) || typeof value !== 'string') throw new Error('bad toggle');
+      const cur = store.get(coll, str(id, 40));
+      if (!cur) throw new Error('not found');
+      const arr = Array.isArray(cur[field]) ? cur[field] : [];
+      const next = arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value.slice(0, 40)];
+      const doc = await store.patch(coll, cur.id, { [field]: next });
+      io.emit('upsert', { coll, doc, by: online.get(socket.id) || null });
+      ack?.({ ok: true, doc });
+    } catch (e) { ack?.({ ok: false, error: e.message }); }
   });
 
   socket.on('loc', async (p = {}) => {
