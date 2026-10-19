@@ -27,7 +27,7 @@ socket.on('people', (list) => {
   if (!me) showGate(); else hideGate();
   renderMe(); renderGate(); renderOnline(); renderChannel();
 });
-fetch('/ima/api/config').then((r) => r.json()).then((c) => { voiceOn = c.voice; roles = c.roles; renderPtt(); }).catch(() => {});
+fetch('/ima/api/config').then((r) => r.json()).then((c) => { voiceOn = c.voice; roles = c.roles; renderPtt(); renderGate(); }).catch(() => {});
 
 function renderMe() { $('#me-btn').innerHTML = me ? av(person(me), 38) : ''; }
 $('#me-btn').onclick = () => person(me) && profileSheet(person(me));

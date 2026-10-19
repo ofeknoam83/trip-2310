@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { AccessToken } from 'livekit-server-sdk';
+import { imaPeople } from './seed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROLES = ['מוקד', 'רופא/ה', 'ייעוץ', 'אחות/אח', 'פרמדיק/ית', 'אחר'];
@@ -14,13 +15,19 @@ function clean(d = {}) {
   const out = {};
   if (d.name !== undefined) out.name = str(d.name, 40);
   if (d.role !== undefined) out.role = ROLES.includes(d.role) ? d.role : 'אחר';
-  if (d.avatar !== undefined) out.avatar = typeof d.avatar === 'string' && d.avatar.startsWith('data:image/') ? d.avatar.slice(0, 60000) : '';
+  if (d.avatar !== undefined) out.avatar = typeof d.avatar === 'string' && (d.avatar.startsWith('data:image/') || /^\/ima\/avatars\/[a-z0-9-]+\.jpg$/.test(d.avatar)) ? d.avatar.slice(0, 60000) : '';
   return out;
 }
 
 export function mountIma({ app, io, store, livekit }) {
   const room = (process.env.IMA_LIVEKIT_ROOM || 'ima-ptt').trim();
   const list = () => store.all(COLL).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  // Seed the roster once, only if it is empty
+  if (!store.all(COLL).length) {
+    let t = Date.now();
+    for (const p of imaPeople) store.put(COLL, null, { ...p, avatar: p.avatar || '', createdAt: t++ });
+    console.log(`[ima] seeded ${imaPeople.length} people`);
+  }
 
   app.use('/ima', express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
   app.get('/ima/api/config', (_q, r) => r.json({ voice: !!(livekit.url && livekit.key && livekit.secret), roles: ROLES }));
