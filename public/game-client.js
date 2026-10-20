@@ -130,9 +130,13 @@ export function initGame(ctx) {
           </div>`;
         }).join('') : `<p class="muted" style="margin:0">${ready().length ? 'אין כרגע אף אחת בסביבה. הן מופיעות ליד הקבוצה, ליד נקודות במפה ולאורך הציר.' : 'עוד אין דמויות. מוסיפים אותן בלשונית "דמויות".'}</p>`}
       </div>
-      ${ready().length ? '<button class="btn ghost block" id="go-practice">🎯 תרגול – דמות מול המצלמה (בלי נקודות)</button>' : ''}`;
+      <button class="btn ghost block" id="go-practice">🎯 תרגול – דמות מול המצלמה (בלי נקודות)</button>`;
     $$('[data-catch]', el).forEach((b) => (b.onclick = () => { const s = G.gspawns.get(b.dataset.catch); if (s) openAR(G.gchars.get(s.char), s); }));
-    $('#go-practice', el)?.addEventListener('click', () => { const r = ready(); openAR(r[Math.floor(Math.random() * r.length)], null); });
+    $('#go-practice', el)?.addEventListener('click', () => {
+      const r = ready();
+      if (!r.length) { toast('קודם מוסיפים דמות בלשונית "דמויות"'); view = 'admin'; render(); return; }
+      openAR(r[Math.floor(Math.random() * r.length)], null);
+    });
   }
 
   function renderDex() {
@@ -320,7 +324,7 @@ export function initGame(ctx) {
     await three();
     const w = 512, h = 640; const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true }); renderer.setSize(w, h);
     const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0x664422, 2.4));
-    const cam = new THREE.PerspectiveCamera(30, w / h, 0.1, 50); cam.position.set(0, 1.25, 4.3); cam.lookAt(0, 0.9, 0);
+    const cam = new THREE.PerspectiveCamera(30, w / h, 0.1, 50); cam.position.set(0, 1.0, 3.6); cam.lookAt(0, 0.88, 0);
     const { holder, clips } = await loadModel(url, true); scene.add(holder);
     if (clips.length) { const mx = new THREE.AnimationMixer(holder); mx.clipAction(clips[0]).play(); mx.update(1.5); }
     renderer.render(scene, cam);
@@ -335,7 +339,7 @@ export function initGame(ctx) {
       const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); renderer.setSize(w, h); renderer.setPixelRatio(Math.min(2, devicePixelRatio));
       el.append(renderer.domElement);
       const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0x664422, 2.2));
-      const cam = new THREE.PerspectiveCamera(35, w / h, 0.1, 50); cam.position.set(0, 1.1, 4.2); cam.lookAt(0, 0.85, 0);
+      const cam = new THREE.PerspectiveCamera(35, w / h, 0.1, 50); cam.position.set(0, 1.0, 3.3); cam.lookAt(0, 0.85, 0);
       const m = await loadModel(c.glbWave || c.glb); const { holder, clips } = m; scene.add(holder);
       const mixer = clips.length ? new THREE.AnimationMixer(holder) : null; if (mixer) mixer.clipAction(clips[0]).play();
       const clock = new THREE.Clock(); let tt = 0;
@@ -385,9 +389,9 @@ export function initGame(ctx) {
     window.addEventListener('deviceorientation', onOri);
     const D = Math.PI / 180;
     const place = () => {
-      // Stand her ~4 m in front of wherever the phone points when the screen opens
+      // Stand her ~3 m in front of wherever the phone points when the screen opens
       const f = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion); f.y = 0; if (f.lengthSq() < 1e-4) f.set(0, 0, -1); f.normalize();
-      model.holder.position.set(f.x * 4, 0, f.z * 4); model.holder.lookAt(0, 0, 0); model.holder.rotation.x = 0; model.holder.rotation.z = 0;
+      model.holder.position.set(f.x * 3, 0, f.z * 3); model.holder.lookAt(0, 0, 0); model.holder.rotation.x = 0; model.holder.rotation.z = 0;
       placed = true;
     };
     const clock = new THREE.Clock(); let dodge = 0; let t = 0;
@@ -419,7 +423,7 @@ export function initGame(ctx) {
     ov.addEventListener('pointerdown', (e) => { if (!e.target.closest('.go-top')) start = { x: e.clientX, y: e.clientY, t: performance.now() }; });
     ov.addEventListener('pointerup', async (e) => {
       if (!start || done) return; const dy = start.y - e.clientY; const dx = e.clientX - start.x; const dtm = performance.now() - start.t; start = null;
-      if (dy < 60 || dtm > 900) return;
+      if (dy < 50 || dtm > 1500) return;
       tries++;
       const ring = $('.go-ring', ov); const k = +ring.style.getPropertyValue('--k') || 1;
       const rx = parseFloat(ring.style.left), ry = parseFloat(ring.style.top);
