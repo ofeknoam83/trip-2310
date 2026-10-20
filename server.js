@@ -38,7 +38,11 @@ await seedMenu(store);
 const app = express();
 app.use(compression());
 app.use(express.json({ limit: '45mb' })); // GLB avatars for the game arrive as base64
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h', extensions: ['html'] }));
+// Code and pages are revalidated on every load (cheap 304s), so a deploy reaches phones right away; images can stay cached
+app.use(express.static(path.join(__dirname, 'public'), {
+  extensions: ['html'],
+  setHeaders: (res, file) => res.setHeader('Cache-Control', /\.(js|css|html|webmanifest)$/.test(file) ? 'no-cache' : 'public, max-age=86400'),
+}));
 // three.js for the AR game, served from the installed package (no CDN needed)
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three'), { maxAge: '7d' }));
 
