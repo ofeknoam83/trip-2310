@@ -510,18 +510,28 @@ export function initGame(ctx) {
     if (j.id && 'caches' in window) { const src = `/api/narrator.glb?v=${encodeURIComponent(j.v || '')}`; try { const c = await caches.open(CACHE); if (!(await c.match(src))) { const r = await fetch(src); if (r.ok) await c.put(src, r); } } catch { /* ignore */ } }
   }).catch(() => {});
   async function narrate(on) {
-    if (!on) { if (narr) { narr.el.classList.add('out'); const n = narr; narr = null; n.stopped = true; setTimeout(() => { n.el.remove(); n.renderer?.dispose(); }, 400); } return; }
+    if (!on) { if (narr) { narr.el.classList.add('out'); const n = narr; narr = null; n.stopped = true; clearTimeout(n.slow); setTimeout(() => { n.el.remove(); n.renderer?.dispose(); }, 400); } return; }
     if (narr) return;
     try { if (!narrInfo) narrInfo = await (await fetch('/api/narrator')).json(); } catch { return; }
     if (!narrInfo?.id) return;
     const el = document.createElement('div'); el.className = 'narrator';
-    el.innerHTML = `<canvas></canvas><div class="narr-load"><i></i><i></i><i></i></div><div class="narr-name">🎙️ ${esc(narrInfo.name || '')}</div>`;
+    el.innerHTML = `<canvas></canvas><img class="narr-img" alt="" hidden><div class="narr-load"><i></i><i></i><i></i></div><div class="narr-err" hidden></div><div class="narr-name">🎙️ ${esc(narrInfo.name || '')}</div>`;
+    // If 3D can't be shown, fall back to a picture of the character that bobs while talking
+    const fallback = (why) => {
+      if (me.stopped) return;
+      const img = $('.narr-img', el); img.src = `/api/narrator.img?v=${encodeURIComponent(narrInfo.v || '')}`; img.hidden = false;
+      img.onerror = () => { img.hidden = true; };
+      el.classList.add('ready', 'flat'); const er = $('.narr-err', el); er.textContent = why; er.hidden = !why;
+      console.warn('[narrator] 3D unavailable:', why);
+    };
     document.body.append(el); requestAnimationFrame(() => el.classList.add('in'));
     const me = { el, stopped: false }; narr = me;
     try {
+      const slow = setTimeout(() => { if (!el.classList.contains('ready')) fallback('הטעינה איטית'); }, 15000);
+      me.slow = slow;
       await three();
       const canvas = $('canvas', el); const w = 170, h = 230;
-      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true }); renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(w, h, false); me.renderer = renderer;
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' }); renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(w, h, false); me.renderer = renderer;
       const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0x664422, 2.3));
       const key = new THREE.DirectionalLight(0xffe2c0, 1.3); key.position.set(1.5, 2.5, 3); scene.add(key);
       const cam = new THREE.PerspectiveCamera(30, w / h, 0.05, 20); cam.position.set(0, 1.38, 2.25); cam.lookAt(0, 1.18, 0);
@@ -534,11 +544,12 @@ export function initGame(ctx) {
       scene.add(m.holder);
       const mixer = m.clips.length ? new THREE.AnimationMixer(m.holder) : null; if (mixer) mixer.clipAction(m.clips[0]).play();
       if (m.proc) m.proc.talk = true;
+      clearTimeout(slow); el.classList.remove('flat'); $('.narr-img', el).hidden = true; $('.narr-err', el).hidden = true;
       el.classList.add('ready');
       const clock = new THREE.Clock(); let t = 0;
       const loop = () => { if (me.stopped) return; const dt = clock.getDelta(); t += dt; mixer?.update(dt); m.proc?.update(t); renderer.render(scene, cam); requestAnimationFrame(loop); };
       loop();
-    } catch (e) { console.warn('[narrator]', e); el.remove(); if (narr === me) narr = null; }
+    } catch (e) { fallback(String(e?.message || e).slice(0, 80)); }
   }
 
   check();

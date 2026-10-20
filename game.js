@@ -164,6 +164,11 @@ export function mountGame({ app, io, store }) {
     const b = await store.blobGet(c.glb); if (!b?.length) return res.status(404).end();
     res.set({ 'content-type': 'model/gltf-binary', 'cache-control': 'public, max-age=3600' }).send(b);
   });
+  app.get('/api/narrator.img', async (_req, res) => {
+    const c = narratorChar(); if (!c?.thumb) return res.status(404).end();
+    const b = await store.blobGet(c.thumb); if (!b?.length) return res.status(404).end();
+    res.set({ 'content-type': b[0] === 0x89 ? 'image/png' : 'image/jpeg', 'cache-control': 'public, max-age=3600' }).send(b);
+  });
   app.post('/api/game/narrator', guard, async (req, res) => {
     const id = req.body?.id === null ? 'none' : str(req.body?.id, 40);
     const doc = store.get('info', 'main') ? await store.patch('info', 'main', { narrator: id }) : await store.put('info', 'main', { narrator: id });
