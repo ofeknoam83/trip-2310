@@ -389,9 +389,9 @@ export function initGame(ctx) {
     window.addEventListener('deviceorientation', onOri);
     const D = Math.PI / 180;
     const place = () => {
-      // Stand her ~3 m in front of wherever the phone points when the screen opens
+      // Stand her ~2.5 m in front of wherever the phone points when the screen opens
       const f = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion); f.y = 0; if (f.lengthSq() < 1e-4) f.set(0, 0, -1); f.normalize();
-      model.holder.position.set(f.x * 3, 0, f.z * 3); model.holder.lookAt(0, 0, 0); model.holder.rotation.x = 0; model.holder.rotation.z = 0;
+      model.holder.position.set(f.x * 2.5, 0, f.z * 2.5); model.holder.lookAt(0, 0, 0); model.holder.rotation.x = 0; model.holder.rotation.z = 0;
       placed = true;
     };
     const clock = new THREE.Clock(); let dodge = 0; let t = 0;
