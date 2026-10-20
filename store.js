@@ -5,7 +5,9 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import * as seed from './seed.js';
 
-export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes', 'food', 'foodchat', 'expenses', 'payments'];
+export const COLLECTIONS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes', 'food', 'foodchat', 'expenses', 'payments', 'gchars', 'gspawns', 'gcatches'];
+// Game data stays out of the public snapshot (it is served behind the trip PIN)
+const PRIVATE = new Set(['gchars', 'gspawns', 'gcatches']);
 
 const newId = () => crypto.randomBytes(6).toString('base64url');
 
@@ -82,7 +84,7 @@ export async function createStore() {
     async del(c, id) { mem[c].delete(id); await persist.del(c, id); },
     blobGet: (k) => blob.get(k),
     blobPut: (k, b) => blob.put(k, b),
-    snapshot() { return Object.fromEntries(COLLECTIONS.map((c) => [c, store.all(c)])); },
+    snapshot() { return Object.fromEntries(COLLECTIONS.filter((c) => !PRIVATE.has(c)).map((c) => [c, store.all(c)])); },
   };
 
   // Seed an empty store

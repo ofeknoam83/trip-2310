@@ -28,6 +28,10 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false  # השף בטאב האוכל (GPT-5.5)
+      - key: TRIPO_API_KEY
+        sync: false  # 3D models for the game
+      - key: GAME_PIN
+        sync: false  # trip code that unlocks the game
       - key: ELEVENLABS_VOICE_ID
         value: 1Bszs5Q0NJ7nxszIYlMg  # "Kenett"
 

@@ -11,6 +11,7 @@ import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
 import Busboy from 'busboy';
 import { parseRouteBytes, fetchRoute, sourceOf } from './routes.js';
 import { mountChef, seedMenu, FOOD_SHAPE, PARTY_SHAPE } from './chef.js';
+import { mountGame } from './game.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -36,8 +37,10 @@ const store = await createStore();
 await seedMenu(store);
 const app = express();
 app.use(compression());
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '45mb' })); // GLB avatars for the game arrive as base64
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h', extensions: ['html'] }));
+// three.js for the AR game, served from the installed package (no CDN needed)
+app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three'), { maxAge: '7d' }));
 
 // ---------- helpers ----------
 const str = (v, max = 300) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -289,10 +292,11 @@ app.get('/healthz', (_req, res) => res.send('ok'));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 2e5, pingInterval: 20000, pingTimeout: 30000 });
 
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const online = new Map(); // socket.id -> personId
 mountChef({ app, io, store, apiKey: CHEF_KEY, model: CHEF_MODEL, provider: CHEF_PROVIDER });
+mountGame({ app, io, store });
+app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 console.log(`[chef] ${CHEF_KEY ? `${CHEF_PROVIDER} / ${CHEF_MODEL}` : 'off (no API key)'}`);
 const sheet = startSheetSync({ store, io });
 

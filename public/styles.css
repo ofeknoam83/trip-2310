@@ -500,3 +500,59 @@ body.navigating #view { padding-bottom: 130px; }
 .pay-big { font-family: var(--display); font-size: 64px; text-align: center; color: var(--ember-2); text-shadow: 0 0 30px rgba(255, 138, 61, .45); margin: 0 0 10px; }
 .bit-btn { margin: 14px 0 8px; text-align: center; justify-content: center; background: linear-gradient(135deg, #1fc0d0, #2a7de1); color: #fff; }
 .phone-nudge { border-color: rgba(255, 138, 61, .45); background: rgba(255, 138, 61, .08); }
+
+/* ---------- Wife GO ---------- */
+.go-title span, .go-o { color: var(--rose); text-shadow: 0 0 22px rgba(255, 107, 139, .7); }
+.go-home { cursor: pointer; border-color: rgba(255, 107, 139, .45); background: linear-gradient(135deg, rgba(255, 107, 139, .14), rgba(127, 224, 210, .08)); }
+.go-logo { font-size: 46px; text-align: center; filter: drop-shadow(0 0 16px rgba(255, 107, 139, .7)); }
+.go-logo.sm { font-size: 28px; }
+.go-lock { text-align: center; }
+.go-lock form { display: flex; gap: 8px; max-width: 320px; margin: 0 auto; }
+.go-lock .input { text-align: center; letter-spacing: .3em; font-size: 20px; }
+.go-player .chips { margin-bottom: 10px; }
+.go-score { display: grid; grid-template-columns: auto 1fr auto auto; gap: 4px 10px; align-items: baseline; }
+.go-score b { font-family: var(--display); font-size: 34px; color: var(--ember-2); line-height: 1; }
+.go-score span { font-size: 13px; color: var(--sand-dim); }
+.go-spawn { --rc: var(--moon); }
+.go-spawn.near { background: color-mix(in srgb, var(--rc) 12%, transparent); border-radius: var(--r-md); padding: 8px; margin: 0 -8px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--rc) 50%, transparent); }
+.go-thumb { width: 44px; height: 44px; border-radius: 12px; overflow: hidden; display: grid; place-items: center; background: rgba(15, 23, 51, .7); border: 2px solid var(--rc, var(--line-2)); flex: none; font-size: 20px; }
+.go-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.go-thumb.unknown img { filter: brightness(0) drop-shadow(0 0 2px var(--rc, #fff)); }
+.go-thumb.big { width: 100%; height: auto; aspect-ratio: 4 / 5; border-radius: 16px; background: radial-gradient(circle at 50% 70%, color-mix(in srgb, var(--rc) 35%, transparent), rgba(15, 23, 51, .7) 70%); }
+.go-thumb img { object-fit: contain; }
+.go-dist { display: grid; justify-items: center; font-size: 12px; font-weight: 700; color: var(--sand-dim); min-width: 52px; }
+.go-dist i { font-style: normal; display: inline-block; font-size: 18px; color: var(--rc); transition: transform .3s; }
+.go-dex { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.go-card { --rc: var(--moon); display: grid; gap: 6px; padding: 8px; border-radius: 18px; background: rgba(15, 23, 51, .55); border: 1px solid color-mix(in srgb, var(--rc) 50%, transparent); text-align: center; box-shadow: 0 0 18px color-mix(in srgb, var(--rc) 22%, transparent); }
+.go-card small { color: var(--rc); font-weight: 700; }
+.go-card.locked { opacity: .75; box-shadow: none; }
+.go-sheet .go-view { min-height: 260px; display: grid; place-items: center; border-radius: 18px; background: radial-gradient(circle at 50% 70%, color-mix(in srgb, var(--rc) 30%, transparent), transparent 70%); margin-bottom: 10px; }
+.go-stat { display: grid; grid-template-columns: 90px 1fr 34px; gap: 8px; align-items: center; margin: 6px 0; font-size: 14px; }
+.go-stat i { height: 8px; border-radius: 99px; background: rgba(243, 234, 217, .12); overflow: hidden; }
+.go-stat i b { display: block; height: 100%; background: linear-gradient(90deg, var(--rc), var(--ember)); }
+.go-stat em { font-style: normal; font-weight: 800; color: var(--rc); }
+.go-medal { width: 34px; text-align: center; font-size: 22px; font-weight: 800; color: var(--sand-dim); }
+.go-pin { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: #1b1209; border: 2px solid var(--rc); box-shadow: 0 0 14px var(--rc); font-size: 13px; animation: goPulse 1.6s infinite; }
+@keyframes goPulse { 50% { transform: scale(1.15); } }
+.mini-in { padding: 2px 6px; min-height: 0; font-size: 13px; }
+body.go-open { overflow: hidden; }
+body.go-open .tabbar, body.go-open #nav-bar { display: none; }
+.go-ar { position: fixed; inset: 0; z-index: 200; background: #000; touch-action: none; user-select: none; -webkit-user-select: none; }
+.go-ar.nocam { background: radial-gradient(circle at 50% 80%, #c9874a, #6b3b1e 55%, #1b1209); }
+.go-ar video, .go-ar canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.go-ring { --k: 1; position: absolute; width: 0; height: 0; pointer-events: none; transition: opacity .2s; }
+.go-ring::before, .go-ring i { content: ''; position: absolute; left: 50%; top: 50%; border-radius: 50%; transform: translate(-50%, -50%); }
+.go-ring::before { width: 150px; height: 150px; border: 3px solid rgba(255, 255, 255, .7); }
+.go-ring i { width: calc(150px * var(--k)); height: calc(150px * var(--k)); border: 4px solid var(--rc); box-shadow: 0 0 18px var(--rc), inset 0 0 18px var(--rc); }
+.go-heart { position: absolute; font-size: 52px; opacity: 0; pointer-events: none; filter: drop-shadow(0 0 12px rgba(255, 107, 139, .9)); }
+.go-top { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); inset-inline: 12px; display: flex; gap: 12px; align-items: center; }
+.go-top > div { padding: 8px 14px; border-radius: 16px; background: rgba(0, 0, 0, .45); backdrop-filter: blur(10px); }
+.go-top b { display: block; font-size: 18px; } .go-top small { color: var(--rc); font-weight: 700; }
+.go-x { background: rgba(0, 0, 0, .5) !important; color: #fff; }
+.go-hint { position: absolute; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); inset-inline: 20px; text-align: center; font-weight: 700; padding: 10px 14px; border-radius: 16px; background: rgba(0, 0, 0, .45); backdrop-filter: blur(10px); }
+.go-hint.pulse { animation: goShake .4s; }
+@keyframes goShake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+.go-msg { position: absolute; left: 50%; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(92vw, 380px); display: grid; gap: 8px; text-align: center; padding: 18px; border-radius: 22px; background: rgba(15, 23, 51, .82); backdrop-filter: blur(14px); border: 1px solid var(--rc); box-shadow: 0 0 30px color-mix(in srgb, var(--rc) 50%, transparent); }
+.go-msg b { font-family: var(--display); font-size: 36px; line-height: 1; } .go-msg span { color: var(--rc); font-weight: 700; }
+.go-conf { position: absolute; top: -40px; font-style: normal; font-size: 26px; animation: goFall 2.2s ease-in forwards; pointer-events: none; }
+@keyframes goFall { to { transform: translateY(110vh) rotate(540deg); opacity: .2; } }

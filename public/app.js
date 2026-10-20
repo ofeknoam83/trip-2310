@@ -1,6 +1,7 @@
 /* טיול 23-24/10 – client */
 import { PLACES, REGIONS, locate } from '/places.js';
 import * as F from '/food.js';
+import { initGame } from '/game-client.js';
 
 // ---------- utils ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -45,6 +46,7 @@ const S = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let me = ls.get('trip.me');
 let online = new Set();
 let config = { voice: false, photos: false, driveFolderUrl: '' };
+let game = null; // Wife GO
 let loaded = false;
 
 const person = (id) => S.people.get(id);
@@ -138,7 +140,7 @@ function toast(html, p) {
 }
 
 // ---------- routing ----------
-const ROUTES = ['home', 'tasks', 'gear', 'food', 'money', 'map', 'voice', 'photos'];
+const ROUTES = ['home', 'tasks', 'gear', 'food', 'money', 'map', 'voice', 'photos', 'game'];
 const hashRoute = () => location.hash.slice(2).split('?')[0];
 const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '');
 let route = ROUTES.includes(hashRoute()) ? hashRoute() : 'home';
@@ -150,6 +152,7 @@ function go(r) {
   for (const [k, el] of Object.entries(sections)) el.hidden = k !== r;
   $$('.tabbar button').forEach((b) => { if (b.dataset.go === r) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   if (r === 'map') ensureMap();
+  if (r === 'game') game?.render(); else game?.leave();
   if (r === 'photos' && (photosStale || !photos.length)) loadPhotos();
   window.scrollTo({ top: 0 });
 }
@@ -230,6 +233,7 @@ function mountSections() {
       <div class="panel" id="money-settle"></div>
       <div class="panel" id="money-list"></div>
     </section>
+    <section id="sec-game"></section>
     <section id="sec-photos">
       <h1 class="page-title">תמונות מהטיול</h1>
       <p class="page-sub">כל תמונה שמעלים נשמרת בתיקייה משותפת בגוגל דרייב, ופתוחה לצפייה לכולם.</p>
@@ -324,6 +328,7 @@ function renderHome() {
     ${me && meP() && !meP().phone ? `<div class="panel phone-nudge"><div class="who-row" style="border:0;padding:0">
       <span style="font-size:26px">📱</span><div class="grow"><b>הוסיפו את המספר שלכם לביט</b><small>כדי שאפשר יהיה להחזיר לכם כסף על הוצאות</small></div>
       <button class="btn small" id="add-phone">הוספה</button></div></div>` : ''}
+    ${game?.homeCard() || ''}
     ${homeRouteCard()}
 
     ${me ? `<div class="panel">
@@ -961,7 +966,7 @@ function ensureMap() {
     maxZoom: 18, attribution: 'Imagery © Esri',
   });
   map.on('contextmenu', (e) => pinSheet(e.latlng));
-  updateMarkers(); drawRoute();
+  updateMarkers(); drawRoute(); game?.drawMap();
   fitAll(false);
   setTimeout(() => map.invalidateSize(), 100);
 }
@@ -1966,6 +1971,8 @@ async function pump() {
 
 // ---------- boot ----------
 mountSections();
+game = initGame({ $, $$, esc, toast, openSheet, closeSheet, av, person, firstName, ls, socket, confirmInline, resizeImage, distKm,
+  partyOf: F.partyOf, getMe: () => me, getPos: () => lastPos, getPeople: () => [...S.people.values()], getMap: () => map });
 go(route);
 fetch('/api/config').then((r) => r.json()).then((c) => { config = c; sheetStatus = c.gearSheet || null; renderGear(); renderVoice(); if (route === 'photos') loadPhotos(); else renderPhotos(); }).catch(() => {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
