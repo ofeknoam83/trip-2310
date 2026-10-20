@@ -1972,7 +1972,7 @@ async function pump() {
 // ---------- boot ----------
 mountSections();
 game = initGame({ $, $$, esc, toast, openSheet, closeSheet, av, person, firstName, ls, socket, confirmInline, resizeImage, distKm,
-  partyOf: F.partyOf, getMe: () => me, getPos: () => lastPos, getPeople: () => [...S.people.values()], getMap: () => map });
+  partyOf: F.partyOf, onReady: () => { if (loaded) renderHome(); }, getMe: () => me, getPos: () => lastPos, getPeople: () => [...S.people.values()], getMap: () => map });
 go(route);
 fetch('/api/config').then((r) => r.json()).then((c) => { config = c; sheetStatus = c.gearSheet || null; renderGear(); renderVoice(); if (route === 'photos') loadPhotos(); else renderPhotos(); }).catch(() => {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

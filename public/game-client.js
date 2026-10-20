@@ -32,7 +32,7 @@ export function initGame(ctx) {
     try { info = await (await api('/api/game/check')).json(); } catch { /* offline */ }
     unlocked = !!info.ok;
     if (unlocked) { socket.emit('game:join', pin); await load(); }
-    render();
+    render(); ctx.onReady?.();
   }
   async function load() {
     try {
@@ -484,10 +484,9 @@ export function initGame(ctx) {
     }
   }
   function homeCard() {
-    if (!info.enabled) return '';
     const here = herePos(); const n = unlocked ? liveSpawns().filter((s) => here && dist(here, s) < 1000).length : 0;
     return `<div class="panel go-home" data-go="game"><div class="who-row" style="border:0;padding:0"><span class="go-logo sm">❤️</span>
-      <div class="grow"><b>Wife <span class="go-o">GO</span></b><small>${unlocked ? (n ? `${n} בטווח קילומטר ממך` : 'מחפשים אותן בשטח') : 'נעול בקוד הטיול'}</small></div><span class="btn small">${unlocked ? 'לשחק' : 'פתיחה'}</span></div></div>`;
+      <div class="grow"><b>Wife <span class="go-o">GO</span></b><small>${!info.enabled ? 'בקרוב – מחכה להפעלה' : unlocked ? (n ? `${n} בטווח קילומטר ממך` : 'מחפשים אותן בשטח') : 'נעול בקוד הטיול'}</small></div><span class="btn small">${!info.enabled ? 'מה זה?' : unlocked ? 'לשחק' : 'פתיחה'}</span></div></div>`;
   }
 
   check();
