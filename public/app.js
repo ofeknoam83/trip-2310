@@ -1,5 +1,6 @@
 /* טיול 23-24/10 – client */
 import { PLACES, REGIONS, locate } from '/places.js';
+import * as F from '/food.js';
 
 // ---------- utils ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -39,7 +40,7 @@ function distKm(a, b) {
 const fmtDist = (km) => (km < 1 ? `${Math.round(km * 1000)} מ׳` : `${km.toFixed(km < 10 ? 1 : 0)} ק״מ`);
 
 // ---------- state ----------
-const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes'];
+const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes', 'food', 'foodchat'];
 const S = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let me = ls.get('trip.me');
 let online = new Set();
@@ -137,7 +138,7 @@ function toast(html, p) {
 }
 
 // ---------- routing ----------
-const ROUTES = ['home', 'tasks', 'gear', 'map', 'voice', 'photos'];
+const ROUTES = ['home', 'tasks', 'gear', 'food', 'map', 'voice', 'photos'];
 const hashRoute = () => location.hash.slice(2).split('?')[0];
 const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '');
 let route = ROUTES.includes(hashRoute()) ? hashRoute() : 'home';
@@ -213,6 +214,15 @@ function mountSections() {
       <div class="panel"><div class="panel-head"><h2>מי איפה</h2><span class="small muted">לחיצה ארוכה על המפה מוסיפה נקודה</span></div><div id="where-list"></div></div>
     </section>
     <section id="sec-voice"></section>
+    <section id="sec-food">
+      <h1 class="page-title">אוכל ושתייה</h1>
+      <p class="page-sub">הכמויות מחושבות לפי מי שמגיע ומה הילדים אוכלים, ומתעדכנות לבד. אפשר לבקש מהשף לשנות כל דבר.</p>
+      <div class="panel" id="food-head"></div>
+      <div class="panel chef" id="chef"></div>
+      <div id="food-tools"></div>
+      <div id="food-list"></div>
+      <button class="btn ghost block" id="food-add" style="margin-top:6px">+ הוספת פריט</button>
+    </section>
     <section id="sec-photos">
       <h1 class="page-title">תמונות מהטיול</h1>
       <p class="page-sub">כל תמונה שמעלים נשמרת בתיקייה משותפת בגוגל דרייב, ופתוחה לצפייה לכולם.</p>
@@ -227,24 +237,26 @@ function mountSections() {
       <div id="photo-grid"></div>
     </section>`;
   for (const r of ROUTES) sections[r] = $(`#sec-${r}`);
-  bindTasks(); bindGear(); bindMap(); bindPhotos();
+  bindTasks(); bindGear(); bindFood(); bindMap(); bindPhotos();
 }
 
 // ---------- render dispatch ----------
 function renderAll() {
   if (!loaded) return;
-  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots(); renderRoutePanel(); drawRoute();
+  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots(); renderRoutePanel(); drawRoute(); renderFood();
   if (route === 'photos') renderPhotos();
 }
 function renderColl(c) {
   if (c === 'people') return renderAll();
+  if (c === 'food' || c === 'foodchat') { if (c === 'foodchat') renderChef(); else renderFood(); }
   if (c === 'tasks') { renderTasks(); renderHome(); }
   if (c === 'supplies') { renderGear(); renderHome(); }
   if (c === 'info' || c === 'news') renderHome();
+  if (c === 'info') renderFood();
   if (c === 'locations' || c === 'pins') { updateMarkers(); renderWhere(); }
   if (c === 'routes' || c === 'info') {
     if (nav && (!S.routes.has(nav.id) || info().activeRoute !== nav.id)) stopNav(false);
-    renderRoutePanel(); drawRoute();
+    renderRoutePanel(); drawRoute(); renderHome();
   }
   renderDots();
 }
@@ -263,7 +275,7 @@ function countCompanions(s) {
   return s.replace(/\s+ו(?=\S)/g, ',').split(/[,،+]/).map((x) => x.trim()).filter(Boolean).length;
 }
 const rsvpOf = (p) => p.rsvp || (p.companions?.trim() ? 'with' : 'unknown');
-const partySize = (p) => { const r = rsvpOf(p); return r === 'no' ? 0 : 1 + (r === 'with' ? countCompanions(p.companions) : 0); };
+const partySize = (p) => { const r = rsvpOf(p); return r === 'no' ? 0 : 1 + (r === 'with' ? F.partyOf(p).length : 0); };
 function rsvpLine(p) {
   const r = rsvpOf(p);
   if (r === 'no') return 'לא מגיע';
@@ -300,6 +312,8 @@ function renderHome() {
       <button class="stat" data-go="tasks"><b>${wanted}</b><span>משימות בלי אחראי, מתוך ${openTasks} פתוחות</span></button>
       <button class="stat" data-go="gear"><b>${unclaimed}</b><span>פריטי ציוד לכולם שאף אחד עוד לא לקח</span></button>
     </div>
+
+    ${homeRouteCard()}
 
     ${me ? `<div class="panel">
       <div class="panel-head"><h2>עליי</h2></div>
@@ -533,6 +547,7 @@ function personSheet(p) {
   const isNew = !p;
   const d = p || { name: '', companions: '', color: COLORS[S.people.size % COLORS.length], avatar: '', rsvp: 'unknown' };
   let avatar = d.avatar; let color = d.color; let rsvp = rsvpOf(d);
+  let party = F.partyOf(d).map((m) => ({ ...m }));
   openSheet(`
     <h3>${isNew ? 'משתתף חדש' : p.id === me ? 'הפרופיל שלי' : esc(p.name)}</h3>
     <form id="f">
@@ -546,7 +561,11 @@ function personSheet(p) {
         <button type="button" data-r="with">עם עוד אנשים</button>
         <button type="button" data-r="no">לא מגיע</button>
       </div></div>
-      <label class="field" id="comp-field"><span>מי מגיע איתו (שמות, מופרדים בפסיק)</span><input class="input" name="companions" value="${esc(d.companions)}" placeholder="למשל: עמית, נועה" maxlength="120"></label>
+      <div class="field" id="comp-field"><span>מי מגיע איתו</span><div id="party-rows"></div>
+        <button type="button" class="btn small ghost" id="party-add">+ הוספת מלווה</button></div>
+      <div class="field"><span>אני</span><label class="small"><input type="checkbox" name="drinks" ${d.drinks !== false ? 'checked' : ''}> שותה אלכוהול</label>
+        <label class="small" style="margin-inline-start:12px"><input type="checkbox" name="veg" ${d.veg ? 'checked' : ''}> צמחוני</label>
+        <label class="small" style="margin-inline-start:12px"><input type="checkbox" name="noRed" ${d.noRed ? 'checked' : ''}> בלי בשר אדום</label></div>
       <p class="small muted" id="party" style="margin:-4px 0 12px"></p>
       <div class="field"><span>צבע על המפה</span><div style="display:flex;gap:10px;flex-wrap:wrap" id="sw">
         ${COLORS.map((c) => `<button type="button" data-c="${c}" aria-label="${c}" style="width:34px;height:34px;border-radius:50%;background:${c};box-shadow:${c === color ? '0 0 0 3px var(--sand)' : 'none'}"></button>`).join('')}
@@ -560,14 +579,34 @@ function personSheet(p) {
     $('[name=name]', root).oninput = pv;
     $('#pf', root).onchange = async (e) => { const f = e.target.files[0]; if (f) { avatar = await squareAvatar(f); pv(); } };
     $$('#sw button', root).forEach((b) => (b.onclick = () => { color = b.dataset.c; $$('#sw button', root).forEach((x) => (x.style.boxShadow = x === b ? '0 0 0 3px var(--sand)' : 'none')); pv(); }));
+    const drawParty = () => {
+      $('#party-rows', root).innerHTML = party.map((m, i) => `<div class="party-row" data-i="${i}">
+        <input class="input" data-k="name" value="${esc(m.name)}" placeholder="שם" maxlength="30">
+        <select class="input" data-k="kind"><option value="kid" ${m.kind !== 'adult' ? 'selected' : ''}>ילד</option><option value="adult" ${m.kind === 'adult' ? 'selected' : ''}>מבוגר</option></select>
+        <select class="input" data-k="age" ${m.kind === 'adult' ? 'hidden' : ''}>${Object.entries(F.AGES).map(([k, l]) => `<option value="${k}" ${(m.age || 'mid') === k ? 'selected' : ''}>${l.replace('גיל ', '')}</option>`).join('')}</select>
+        <button type="button" class="mini" data-x aria-label="הסרה">✕</button>
+        <div class="party-flags"><label class="small"><input type="checkbox" data-k="veg" ${m.veg ? 'checked' : ''}> צמחוני</label>
+          <label class="small"><input type="checkbox" data-k="noRed" ${m.noRed ? 'checked' : ''}> בלי בשר אדום</label>
+          ${m.kind === 'adult' ? `<label class="small"><input type="checkbox" data-k="drinks" ${m.drinks !== false ? 'checked' : ''}> שותה</label>` : ''}</div>
+      </div>`).join('');
+    };
+    $('#party-rows', root).addEventListener('input', (e) => {
+      const row = e.target.closest('.party-row'); const k = e.target.dataset.k; if (!row || !k) return;
+      const m = party[+row.dataset.i];
+      m[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      if (k === 'kind') { if (m.kind === 'adult') delete m.age; else m.age = m.age || 'mid'; drawParty(); }
+      syncR();
+    });
+    $('#party-rows', root).addEventListener('click', (e) => { const x = e.target.closest('[data-x]'); if (x) { party.splice(+x.closest('.party-row').dataset.i, 1); drawParty(); syncR(); } });
+    $('#party-add', root).onclick = () => { party.push({ name: '', kind: 'kid', age: 'mid' }); drawParty(); syncR(); $('#party-rows .party-row:last-child input', root)?.focus(); };
+    drawParty();
     const syncR = () => {
       $$('#rsvp button', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.r === rsvp));
       $('#comp-field', root).hidden = rsvp !== 'with';
-      const n = partySize({ rsvp, companions: $('[name=companions]', root).value });
+      const n = partySize({ rsvp, party });
       $('#party', root).textContent = rsvp === 'unknown' ? 'בחרו אם מגיע.' : rsvp === 'no' ? 'לא נספר במספר האנשים.' : `נספר כ־${n} ${n === 1 ? 'איש' : 'אנשים'}.`;
     };
     $$('#rsvp button', root).forEach((b) => (b.onclick = () => { rsvp = b.dataset.r; syncR(); }));
-    $('[name=companions]', root).oninput = syncR;
     syncR();
     $('#remove-person', root)?.addEventListener('click', async (e) => {
       const b = e.currentTarget;
@@ -583,7 +622,9 @@ function personSheet(p) {
     $('#switch-user', root)?.addEventListener('click', () => { closeSheet(); me = null; ls.set('trip.me', null); showGate(); });
     $('#f', root).onsubmit = async (e) => {
       e.preventDefault();
-      const data = { name: e.target.name.value, companions: rsvp === 'with' ? e.target.companions.value : '', rsvp, color, avatar };
+      const clean = rsvp === 'with' ? party.filter((m) => m.name.trim()).map((m) => ({ ...m, name: m.name.trim() })) : [];
+      const data = { name: e.target.name.value, companions: clean.map((m) => m.name).join(', '), party: clean, rsvp, color, avatar,
+        drinks: e.target.drinks.checked, veg: e.target.veg.checked, noRed: e.target.noRed.checked };
       closeSheet();
       await op('people', isNew ? 'add' : 'patch', p?.id, data);
     };
@@ -625,7 +666,7 @@ function bindTasks() {
     await op('tasks', 'add', null, { title, owners: [] });
   };
   $('#task-list').addEventListener('click', async (e) => {
-    const rowEl = e.target.closest('.row'); if (!rowEl) return;
+    const rowEl = e.target.closest('.row'); if (!rowEl || e.target.closest('[data-go]')) return;
     const t = S.tasks.get(rowEl.dataset.id); if (!t) return;
     if (e.target.closest('.check')) return op('tasks', 'patch', t.id, { done: !t.done });
     const del = e.target.closest('.mini.del');
@@ -659,7 +700,8 @@ function renderTasks() {
       <button class="check" role="checkbox" aria-checked="${!!t.done}" aria-label="בוצע">${ICON.check}</button>
       <div class="grow"><span class="title">${esc(t.title)}</span>
         ${wanted ? '<span class="wanted-tag">מחפשת מתנדב</span>' : t.owners?.length ? `<span class="owners"><span class="stack">${t.owners.map((o) => av(person(o), 22)).join('')}</span><span class="meta">${t.owners.map((o) => esc(firstName(person(o)))).join(', ')}</span></span>` : ''}
-        ${t.note ? `<div class="meta">${esc(t.note)}</div>` : ''}</div>
+        ${t.note ? `<div class="meta">${esc(t.note)}</div>` : ''}
+        ${isFoodTask(t) ? '<button class="chip food-link" data-go="food">🛒 כמויות ורשימת קניות</button>' : ''}</div>
       <div class="row-side">
         ${t.done ? '' : `<button class="take ${mine ? 'mine' : ''}">${mine ? 'שלי' : 'אני לוקח'}</button>`}
         <div class="row-tools"><button class="mini edit" aria-label="עריכה">${ICON.edit}</button><button class="mini del" aria-label="מחיקה">${ICON.trash}</button></div>
@@ -908,7 +950,7 @@ function ensureMap() {
   });
   map.on('contextmenu', (e) => pinSheet(e.latlng));
   updateMarkers(); drawRoute();
-  if (activeRoute() && ![...S.locations.values()].some((l) => l.sharing)) fitRoute(); else fitAll(false);
+  fitAll(false);
   setTimeout(() => map.invalidateSize(), 100);
 }
 function faceIcon(p, loc) {
@@ -955,7 +997,10 @@ document.addEventListener('click', (e) => {
 });
 function fitAll(animate = true) {
   if (!map) return;
-  const pts = [...S.locations.values()].filter((l) => l.sharing).map((l) => [l.lat, l.lng]).concat([...S.pins.values()].map((p) => [p.lat, p.lng]));
+  const r = activeRoute();
+  const pts = [...S.locations.values()].filter((l) => l.sharing && Date.now() - l.t < STALE_MS).map((l) => [l.lat, l.lng])
+    .concat([...S.pins.values()].map((p) => [p.lat, p.lng]))
+    .concat(r ? r.pts.filter((_, i) => i % 20 === 0).concat([r.pts.at(-1)]) : []);
   if (pts.length === 1) map.setView(pts[0], 13, { animate });
   else if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 14, animate });
 }
@@ -1063,6 +1108,157 @@ function renderWhere() {
   el.innerHTML = rows.join('');
 }
 setInterval(() => { if (route === 'map') { renderWhere(); updateMarkers(); } }, 30000);
+
+// ---------- food & drinks (quantities by headcount + the chef assistant) ----------
+let foodView = ls.get('trip.foodView') === 'shop' ? 'shop' : 'meals';
+let foodFilter = 'all';
+let chefBusy = false;
+const foodBuffer = () => (Number.isFinite(+info().foodBuffer) ? +info().foodBuffer : F.DEFAULT_BUFFER);
+const foodEaters = () => F.eaters([...S.people.values()]);
+const isFoodTask = (t) => /ארוח|אוכל|אלכוהול|שתי|מנגל|בשר|קניות/.test(t.title || '');
+
+function bindFood() {
+  $('#sec-food').addEventListener('click', (e) => {
+    const row = e.target.closest('[data-food]');
+    if (row) {
+      const it = S.food.get(row.dataset.food); if (!it) return;
+      if (e.target.closest('.check')) { op('food', 'patch', it.id, { bought: !it.bought }); return; }
+      if (e.target.closest('.take')) { op('food', 'patch', it.id, { owner: it.owner === me ? null : me }); return; }
+      foodSheet(it); return;
+    }
+    const c = e.target.closest('[data-fv]'); if (c) { foodView = c.dataset.fv; ls.set('trip.foodView', foodView); renderFood(); return; }
+    const f = e.target.closest('[data-ff]'); if (f) { foodFilter = f.dataset.ff; renderFood(); return; }
+    if (e.target.closest('#food-add')) foodSheet(null);
+    if (e.target.closest('#food-buffer')) bufferSheet();
+    if (e.target.closest('#food-family')) { if (me) personSheet(meP()); else showGate(); }
+    const sug = e.target.closest('[data-sug]'); if (sug) { $('#chef-in').value = sug.dataset.sug; $('#chef-in').focus(); }
+  });
+  $('#sec-food').addEventListener('submit', (e) => { if (e.target.id === 'chef-form') { e.preventDefault(); sendChef(); } });
+}
+
+function renderFood() {
+  const root = $('#sec-food'); if (!root || !loaded) return;
+  const list = foodEaters(); const h = F.headcount(list); const buf = foodBuffer();
+  const items = [...S.food.values()];
+  const q = new Map(items.map((i) => [i.id, F.qtyOf(i, list, buf)]));
+  const unknown = [...S.people.values()].filter((p) => !p.rsvp || p.rsvp === 'unknown').length;
+  const guessed = [...S.people.values()].filter((p) => (p.rsvp || '') !== 'no' && !Array.isArray(p.party) && p.companions?.trim()).length;
+
+  $('#food-head').innerHTML = `
+    <div class="food-count">
+      <div><b>${h.adults}</b><span>מבוגרים</span></div>
+      <div><b>${h.kids}</b><span>ילדים</span></div>
+      <div><b>${h.drinkers}</b><span>שותים</span></div>
+      <button id="food-buffer"><b>${buf}%</b><span>מרווח</span></button>
+    </div>
+    <p class="small muted" style="margin:10px 0 0">${h.kids ? `ילדים: ${['small', 'mid', 'teen'].filter((a) => h[a]).map((a) => `${h[a]} ב${F.AGES[a]}`).join(', ')}. ` : ''}${h.veg ? `${h.veg} צמחונים. ` : ''}${unknown ? `${unknown} עוד לא אישרו הגעה. ` : ''}${guessed ? `אצל ${guessed} משפחות הגילים עוד משוערים.` : ''}</p>
+    <button class="btn small ghost" id="food-family" style="margin-top:10px">👨‍👧 עריכת המשפחה שלי</button>`;
+
+  renderChef();
+
+  const mine = (i) => i.owner === me;
+  const shown = items.filter((i) => foodFilter === 'all' || (foodFilter === 'mine' && mine(i)) || (foodFilter === 'open' && !i.bought) || (foodFilter === 'free' && !i.owner));
+  const counts = { all: items.length, free: items.filter((i) => !i.owner).length, open: items.filter((i) => !i.bought).length, mine: items.filter(mine).length };
+  $('#food-tools').innerHTML = `
+    <div class="seg" style="margin:0 0 10px"><button data-fv="meals" aria-pressed="${foodView === 'meals'}">לפי ארוחות</button><button data-fv="shop" aria-pressed="${foodView === 'shop'}">רשימת קניות</button></div>
+    <div class="chips">${Object.entries({ all: 'הכול', free: 'בלי קונה', open: 'לא נקנה', mine: 'שלי' }).map(([k, l]) => `<button class="chip" data-ff="${k}" aria-pressed="${foodFilter === k}">${l} ${counts[k]}</button>`).join('')}</div>`;
+
+  const groups = foodView === 'meals'
+    ? F.mealsOf(shown).map((m) => [m, shown.filter((i) => (i.meal || 'כללי') === m)])
+    : [...new Set(shown.map((i) => i.cat || 'אחר'))].map((c) => [c, shown.filter((i) => (i.cat || 'אחר') === c)]);
+  $('#food-list').innerHTML = groups.length ? groups.map(([g, its]) => `
+    <div class="panel food-group"><div class="panel-head"><h2>${esc(g)}</h2><span class="small muted">${its.filter((i) => i.bought).length}/${its.length} נקנו</span></div>
+      ${its.map((i) => foodRow(i, q.get(i.id), foodView === 'shop')).join('')}
+    </div>`).join('') : '<div class="empty-state">אין פריטים כאן.</div>';
+}
+
+function foodRow(i, q, showMeal) {
+  const o = person(i.owner);
+  const per = [i.perAdult ? `מבוגר ${F.fmtAmount(i.unit, i.perAdult).replace(/^(\d+) יח׳$/, '$1')}` : '',
+    ...['small', 'mid', 'teen'].filter((a) => i.perKid?.[a]).map((a) => `${F.AGES[a].replace('גיל ', '')}: ${F.fmtAmount(i.unit, i.perKid[a]).replace(/^(\d+) יח׳$/, '$1')}`)]
+    .filter(Boolean).join(' · ');
+  return `<div class="row food-row ${i.bought ? 'done' : ''}" data-food="${esc(i.id)}">
+    <button class="check" role="checkbox" aria-checked="${!!i.bought}" aria-label="נקנה">${ICON.check}</button>
+    <div class="grow"><span class="title">${esc(i.name)}</span>
+      <div class="food-qty">${esc(F.fmtQty(i, q))}</div>
+      <div class="meta">${showMeal ? `${esc(i.meal)} · ` : ''}${i.who && i.who !== 'all' ? `${F.WHO[i.who]} · ` : ''}${per || 'בלי כמות לאדם'}${i.extra ? ` · ${i.extra > 0 ? '+' : ''}${i.extra}` : ''}${i.note ? ` · ${esc(i.note)}` : ''}</div></div>
+    <div class="row-side">${o && i.owner !== me ? `<span class="owner-av" title="${esc(o.name)}">${av(o, 26)}</span>` : `<button class="take ${i.owner === me ? 'mine' : ''}">${i.owner === me ? 'אני קונה' : 'אני אקנה'}</button>`}</div>
+  </div>`;
+}
+
+// ----- the chef -----
+function renderChef() {
+  const el = $('#chef'); if (!el) return;
+  const msgs = [...S.foodchat.values()].sort((a, b) => a.t - b.t).slice(-30);
+  const log = msgs.map((m) => m.role === 'user'
+    ? `<div class="msg me-msg">${av(person(m.by), 28)}<div><b>${esc(firstName(person(m.by)))}</b><p>${esc(m.text)}</p></div></div>`
+    : `<div class="msg chef-msg ${m.error ? 'err' : ''}"><span class="chef-av">👨‍🍳</span><div><p>${esc(m.text).replace(/\n/g, '<br>')}</p>${(m.changes || []).length ? `<div class="changes">${m.changes.map((c) => `<span>${esc(c)}</span>`).join('')}</div>` : ''}</div></div>`).join('');
+  const prev = $('#chef-in')?.value || '';
+  el.innerHTML = `
+    <div class="panel-head"><h2>👨‍🍳 השף</h2><span class="small muted">כתבו מה לשנות, והרשימה מתעדכנת לכולם</span></div>
+    ${config.chef ? '' : '<p class="small muted">השף יתחבר אחרי שמוסיפים מפתח OPENAI_API_KEY ב־Render. בינתיים אפשר לערוך את הרשימה ידנית.</p>'}
+    <div class="chef-log" id="chef-log">${log || `<div class="msg chef-msg"><span class="chef-av">👨‍🍳</span><div><p>היי! תספרו לי מי מגיע ומה הילדים אוכלים, ואני אתאים את הכמויות. אפשר גם לבקש להוסיף מנה, להחליף תפריט או לשאול כמה צריך.</p></div></div>`}
+      ${chefBusy ? '<div class="msg chef-msg"><span class="chef-av">👨‍🍳</span><div><p class="typing"><i></i><i></i><i></i></p></div></div>' : ''}</div>
+    <div class="chips sugs">${['הילדים של עידו בני 4 ו־9', 'תוסיף קבבים לערב שישי', 'יפתח צמחוני', 'כמה בירות צריך?', 'תוריד את הדגנים'].map((s) => `<button class="chip" data-sug="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+    <form id="chef-form" class="chef-form"><input class="input" id="chef-in" placeholder="למשל: שני הילדים של תומר לא אוכלים בשר אדום" maxlength="1000" autocomplete="off" ${config.chef ? '' : 'disabled'}><button class="btn" ${config.chef && !chefBusy ? '' : 'disabled'}>שליחה</button></form>`;
+  $('#chef-in').value = prev;
+  const lg = $('#chef-log'); lg.scrollTop = lg.scrollHeight;
+}
+async function sendChef() {
+  const inp = $('#chef-in'); const text = inp.value.trim(); if (!text || chefBusy) return;
+  if (!me) return showGate();
+  chefBusy = true; inp.value = ''; renderChef();
+  try {
+    const r = await fetch('/api/food/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, by: me }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok && !j.doc) toast(esc(j.error || 'השף לא זמין כרגע'));
+  } catch { toast('אין חיבור לשרת'); }
+  chefBusy = false; renderChef();
+}
+
+// ----- manual editing -----
+function foodSheet(it) {
+  const isNew = !it;
+  const d = it || { meal: F.MEAL_ORDER[0], cat: '', name: '', unit: 'unit', who: 'all', perAdult: 0, perKid: { small: 0, mid: 0, teen: 0 }, tags: [], pack: 0, packName: '', extra: 0, note: '' };
+  const meals = [...new Set([...F.MEAL_ORDER, ...[...S.food.values()].map((x) => x.meal)])];
+  const numIn = (n, v, l) => `<label class="field"><span>${l}</span><input class="input" name="${n}" type="number" inputmode="decimal" step="any" min="0" value="${v ?? 0}"></label>`;
+  openSheet(`
+    <h3>${isNew ? 'פריט חדש' : esc(d.name)}</h3>
+    <form id="f">
+      <label class="field"><span>שם</span><input class="input" name="name" value="${esc(d.name)}" maxlength="80" required></label>
+      <div class="grid2">
+        <label class="field"><span>ארוחה</span><input class="input" name="meal" list="meals-dl" value="${esc(d.meal)}" maxlength="40"><datalist id="meals-dl">${meals.map((m) => `<option value="${esc(m)}">`).join('')}</datalist></label>
+        <label class="field"><span>קטגוריה</span><input class="input" name="cat" value="${esc(d.cat || '')}" maxlength="30" placeholder="בשר, ירקות…"></label>
+        <label class="field"><span>יחידה</span><select class="input" name="unit">${Object.entries(F.UNITS).map(([k, l]) => `<option value="${k}" ${d.unit === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field"><span>למי</span><select class="input" name="who">${Object.entries(F.WHO).map(([k, l]) => `<option value="${k}" ${(d.who || 'all') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      </div>
+      <p class="small muted" style="margin:0 0 8px">כמות לאדם (גולמי)</p>
+      <div class="grid4">${numIn('perAdult', d.perAdult, 'מבוגר')}${numIn('k_small', d.perKid?.small, 'ילד 3–6')}${numIn('k_mid', d.perKid?.mid, 'ילד 7–12')}${numIn('k_teen', d.perKid?.teen, 'נער 13+')}</div>
+      <div class="grid2">${numIn('pack', d.pack, 'גודל אריזה')}<label class="field"><span>שם האריזה</span><input class="input" name="packName" value="${esc(d.packName || '')}" maxlength="30" placeholder="חבילות, שישיות…"></label>
+        ${numIn('extra', d.extra, 'תוספת ידנית')}<div class="field"><span>סוג</span><label class="small"><input type="checkbox" name="meat" ${d.tags?.includes('meat') ? 'checked' : ''}> בשר</label> <label class="small"><input type="checkbox" name="red" ${d.tags?.includes('red') ? 'checked' : ''}> בשר אדום</label></div></div>
+      <label class="field"><span>הערה</span><input class="input" name="note" value="${esc(d.note || '')}" maxlength="200"></label>
+      <div class="actions"><button class="btn" type="submit">${isNew ? 'הוספה' : 'שמירה'}</button><button class="btn ghost" type="button" data-close>ביטול</button></div>
+      ${isNew ? '' : '<button class="btn danger block" type="button" id="del" style="margin-top:10px">מחיקת הפריט</button>'}
+    </form>`, (root) => {
+    $('#del', root)?.addEventListener('click', (e) => { if (confirmInline(e.currentTarget)) { closeSheet(); op('food', 'del', it.id); } });
+    $('#f', root).onsubmit = async (e) => {
+      e.preventDefault(); const f = e.target;
+      const data = { name: f.name.value, meal: f.meal.value || 'כללי', cat: f.cat.value, unit: f.unit.value, who: f.who.value,
+        perAdult: +f.perAdult.value || 0, perKid: { small: +f.k_small.value || 0, mid: +f.k_mid.value || 0, teen: +f.k_teen.value || 0 },
+        pack: +f.pack.value || 0, packName: f.packName.value, extra: +f.extra.value || 0, note: f.note.value,
+        tags: [f.meat.checked && 'meat', f.red.checked && 'red'].filter(Boolean) };
+      if (data.tags.includes('red') && !data.tags.includes('meat')) data.tags.push('meat');
+      closeSheet(); await op('food', isNew ? 'add' : 'patch', it?.id, data);
+    };
+  });
+}
+function bufferSheet() {
+  openSheet(`<h3>מרווח ביטחון</h3><p class="small muted">כמה להוסיף על הכמות המחושבת, כדי שלא ייגמר.</p>
+    <form id="f"><label class="field"><span>אחוזים</span><input class="input" name="b" type="number" min="0" max="50" value="${foodBuffer()}"></label>
+    <div class="actions"><button class="btn" type="submit">שמירה</button><button class="btn ghost" type="button" data-close>ביטול</button></div></form>`, (root) => {
+    $('#f', root).onsubmit = (e) => { e.preventDefault(); closeSheet(); op('info', 'patch', 'main', { foodBuffer: +e.target.b.value || 0 }); };
+  });
+}
 
 // ---------- navigation route (import + voice guidance) ----------
 const activeRoute = () => S.routes.get(info().activeRoute) || null;
@@ -1274,6 +1470,16 @@ function drawRoute() {
   ]).addTo(map);
 }
 function fitRoute() { const r = activeRoute(); if (map && r) map.fitBounds(r.pts, { padding: [30, 30] }); }
+
+function homeRouteCard() {
+  const r = activeRoute(); if (!r) return '';
+  return `<div class="panel route-home">
+    <div class="panel-head"><h2>🧭 ציר הניווט</h2><button class="btn small ghost" data-go="map">למפה</button></div>
+    <div class="route-card"><div class="grow"><b>${esc(r.name)}</b><small>${fmtDist(r.km)} · ${SRC_NAME[r.source] || 'קובץ'} · הקראה קולית של נקודות הציון בדרך</small></div></div>
+    <div class="actions" style="margin-top:12px">${nav ? '<button class="btn danger" data-navtoggle>⏹ סיום ניווט</button>' : '<button class="btn" data-navtoggle>▶ התחלת ניווט קולי</button>'}</div>
+  </div>`;
+}
+document.addEventListener('click', (e) => { if (e.target.closest('[data-navtoggle]')) { nav ? stopNav() : startNav(); renderHome(); } });
 
 function renderRoutePanel() {
   const el = $('#route-panel'); if (!el) return;

@@ -349,7 +349,7 @@ textarea.input { min-height: 80px; resize: vertical; }
 /* ---------- tab bar ---------- */
 .tabbar {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-  display: grid; grid-template-columns: repeat(6, 1fr);
+  display: grid; grid-template-columns: repeat(7, 1fr);
   height: calc(var(--tabbar-h) + var(--safe-b)); padding-bottom: var(--safe-b);
   background: rgba(15, 23, 51, .88); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   border-top: 1px solid var(--line);
@@ -451,3 +451,38 @@ body.navigating #view { padding-bottom: 130px; }
 @media (min-width: 760px) {
   #nav-bar { left: 50%; right: auto; transform: translateX(-50%); width: 620px; bottom: calc(var(--tabbar-h) + 26px); }
 }
+
+/* ---------- food ---------- */
+.food-count { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.food-count > * { display: grid; justify-items: center; padding: 10px 4px; border-radius: var(--r-md); background: rgba(15, 23, 51, .5); border: 1px solid var(--line); }
+.food-count b { font-family: var(--display); font-size: 34px; line-height: 1; color: var(--ember-2); }
+.food-count span { font-size: 13px; color: var(--sand-dim); }
+.food-count button { cursor: pointer; border-style: dashed; }
+.food-row .food-qty { font-weight: 800; color: var(--moon); font-size: 16px; margin-top: 2px; }
+.food-row .owner-av .av { box-shadow: 0 0 0 2px var(--ember); }
+.food-link { margin-top: 8px; font-size: 13px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 8px; }
+.grid4 .field > span { font-size: 12px; }
+.chef { border-color: rgba(127, 224, 210, .35); box-shadow: 0 0 28px rgba(127, 224, 210, .08) inset; }
+.chef-log { max-height: 340px; overflow-y: auto; display: grid; gap: 10px; padding: 4px 2px 10px; overscroll-behavior: contain; }
+.msg { display: flex; gap: 10px; align-items: flex-start; }
+.msg p { margin: 2px 0 0; line-height: 1.45; }
+.msg > div { padding: 9px 12px; border-radius: 16px; background: rgba(15, 23, 51, .55); border: 1px solid var(--line); max-width: 88%; }
+.msg b { font-size: 13px; color: var(--sand-dim); }
+.chef-msg > div { background: rgba(127, 224, 210, .08); border-color: rgba(127, 224, 210, .3); }
+.chef-msg.err > div { border-color: var(--rose); }
+.chef-av { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: rgba(127, 224, 210, .18); flex: none; font-size: 16px; }
+.changes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.changes span { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 99px; background: rgba(255, 179, 107, .15); color: var(--ember-2); }
+.chef-form { display: flex; gap: 8px; margin-top: 8px; }
+.chef-form .input { flex: 1; min-width: 0; }
+.sugs { margin: 4px 0 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.sugs .chip { white-space: nowrap; font-size: 13px; }
+.typing { display: flex; gap: 4px; padding: 4px 0; }
+.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--moon); animation: blink 1s infinite; }
+.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+.party-row { display: grid; grid-template-columns: 1fr 76px 76px 32px; gap: 6px; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.party-row .party-flags { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; }
+.party-row select[hidden] { display: block !important; visibility: hidden; }

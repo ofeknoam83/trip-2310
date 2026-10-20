@@ -10,6 +10,7 @@ import { createStore } from './store.js';
 import { startSheetSync, SHEET_ID, SHEET_GID } from './sheet-sync.js';
 import Busboy from 'busboy';
 import { parseRouteBytes, fetchRoute, sourceOf } from './routes.js';
+import { mountChef, seedMenu, FOOD_SHAPE, PARTY_SHAPE } from './chef.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -24,8 +25,15 @@ const ELEVENLABS_API_KEY = env('ELEVENLABS_API_KEY');
 const ELEVENLABS_VOICE_ID = env('ELEVENLABS_VOICE_ID');
 const ELEVENLABS_MODEL = env('ELEVENLABS_MODEL') || 'eleven_v4';
 const ELEVENLABS_BASE = env('ELEVENLABS_API_BASE') || 'https://api.elevenlabs.io';
+const ANTHROPIC_API_KEY = env('ANTHROPIC_API_KEY');
+const OPENAI_API_KEY = env('OPENAI_API_KEY');
+// The chef uses OpenAI when its key is set (or CHEF_PROVIDER=openai), otherwise Claude
+const CHEF_PROVIDER = env('CHEF_PROVIDER') || (OPENAI_API_KEY ? 'openai' : 'anthropic');
+const CHEF_KEY = CHEF_PROVIDER === 'openai' ? OPENAI_API_KEY : ANTHROPIC_API_KEY;
+const CHEF_MODEL = env('CHEF_MODEL') || (CHEF_PROVIDER === 'openai' ? 'gpt-5.5' : 'claude-sonnet-5-5');
 
 const store = await createStore();
+await seedMenu(store);
 const app = express();
 app.use(compression());
 app.use(express.json({ limit: '20mb' }));
@@ -48,7 +56,12 @@ const SHAPES = {
     }),
     ...(d.phone !== undefined && { phone: str(d.phone, 20) }),
     ...(d.rsvp !== undefined && { rsvp: ['unknown', 'solo', 'with', 'no'].includes(d.rsvp) ? d.rsvp : 'unknown' }),
+    ...(d.party !== undefined && { party: PARTY_SHAPE(d.party) }),
+    ...(d.veg !== undefined && { veg: !!d.veg }),
+    ...(d.noRed !== undefined && { noRed: !!d.noRed }),
+    ...(d.drinks !== undefined && { drinks: !!d.drinks }),
   }),
+  food: FOOD_SHAPE,
   tasks: (d) => ({
     ...(d.title !== undefined && { title: str(d.title, 140) }),
     ...(d.note !== undefined && { note: str(d.note, 500) }),
@@ -80,10 +93,11 @@ const SHAPES = {
   routes: (d) => ({
     ...(d.name !== undefined && { name: str(d.name, 80) }),
   }),
-  info: (d) => Object.fromEntries(
-    ['title', 'dates', 'start', 'area', 'meeting', 'meetingTime', 'notes', 'waLast', 'activeRoute']
-      .filter((k) => d[k] !== undefined).map((k) => [k, str(d[k], 600)]),
-  ),
+  info: (d) => ({
+    ...Object.fromEntries(['title', 'dates', 'start', 'area', 'meeting', 'meetingTime', 'notes', 'waLast', 'activeRoute']
+      .filter((k) => d[k] !== undefined).map((k) => [k, str(d[k], 600)])),
+    ...(d.foodBuffer !== undefined && Number.isFinite(+d.foodBuffer) && { foodBuffer: Math.min(50, Math.max(0, +d.foodBuffer)) }),
+  }),
 };
 
 // ---------- REST ----------
@@ -93,6 +107,7 @@ app.get('/api/config', (_req, res) => {
     photos: !!APPS_SCRIPT_URL,
     driveFolderUrl: DRIVE_FOLDER_URL || '',
     tts: !!(ELEVENLABS_API_KEY && ELEVENLABS_VOICE_ID),
+    chef: !!CHEF_KEY,
     gearSheet: sheet.status,
   });
 });
@@ -262,6 +277,8 @@ const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 2e5, p
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const online = new Map(); // socket.id -> personId
+mountChef({ app, io, store, apiKey: CHEF_KEY, model: CHEF_MODEL, provider: CHEF_PROVIDER });
+console.log(`[chef] ${CHEF_KEY ? `${CHEF_PROVIDER} / ${CHEF_MODEL}` : 'off (no API key)'}`);
 const sheet = startSheetSync({ store, io });
 
 async function callScript(body) {
@@ -299,9 +316,11 @@ io.on('connection', (socket) => {
         const base = coll === 'people'
           ? { name: 'אורח', companions: '', color: '#ff9e4a', avatar: '' }
           : coll === 'tasks' ? { owners: [], note: '', done: false }
-            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] } : {};
+            : coll === 'supplies' ? { qty: '', cat: 'כללי', bringer: null, done: false, scope: 'shared', packedBy: [] }
+              : coll === 'food' ? { meal: 'כללי', unit: 'unit', who: 'all', perAdult: 0, perKid: { small: 0, mid: 0, teen: 0 } } : {};
         if (coll === 'tasks' && !clean.title) throw new Error('missing title');
         if (coll === 'supplies' && !clean.item) throw new Error('missing item');
+        if (coll === 'food' && !clean.name) throw new Error('missing name');
         if (coll === 'pins' && (clean.lat == null || clean.lng == null)) throw new Error('missing coords');
         if (coll === 'news' && !clean.text) throw new Error('missing text');
         doc = await store.put(coll, null, { ...base, ...clean, createdBy: by, createdAt: Date.now() });
@@ -326,7 +345,7 @@ io.on('connection', (socket) => {
         if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
         await store.del('people', pid);
         io.emit('remove', { coll: 'people', id: pid });
-      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'routes'].includes(coll)) {
+      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'routes', 'food'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });
       } else throw new Error('bad action');
