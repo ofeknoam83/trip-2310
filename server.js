@@ -62,6 +62,21 @@ const SHAPES = {
     ...(d.drinks !== undefined && { drinks: !!d.drinks }),
   }),
   food: FOOD_SHAPE,
+  // Shared expenses (shekels) and recorded transfers between participants
+  expenses: (d) => ({
+    ...(d.title !== undefined && { title: str(d.title, 80) }),
+    ...(d.amount !== undefined && { amount: Math.max(0, Math.round((+d.amount || 0) * 100) / 100) }),
+    ...(d.paidBy !== undefined && { paidBy: str(d.paidBy, 40) }),
+    ...(d.among !== undefined && { among: ids(d.among) }),
+    ...(d.by !== undefined && { by: d.by === 'people' ? 'people' : 'family' }),
+    ...(d.cat !== undefined && { cat: str(d.cat, 30) }),
+  }),
+  payments: (d) => ({
+    ...(d.from !== undefined && { from: str(d.from, 40) }),
+    ...(d.to !== undefined && { to: str(d.to, 40) }),
+    ...(d.amount !== undefined && { amount: Math.max(0, Math.round((+d.amount || 0) * 100) / 100) }),
+    ...(d.method !== undefined && { method: d.method === 'cash' ? 'cash' : 'bit' }),
+  }),
   tasks: (d) => ({
     ...(d.title !== undefined && { title: str(d.title, 140) }),
     ...(d.note !== undefined && { note: str(d.note, 500) }),
@@ -321,6 +336,9 @@ io.on('connection', (socket) => {
         if (coll === 'tasks' && !clean.title) throw new Error('missing title');
         if (coll === 'supplies' && !clean.item) throw new Error('missing item');
         if (coll === 'food' && !clean.name) throw new Error('missing name');
+        if (coll === 'expenses' && (!clean.title || !clean.amount || !store.get('people', clean.paidBy))) throw new Error('missing expense fields');
+        if (coll === 'payments' && (!clean.amount || !store.get('people', clean.from) || !store.get('people', clean.to))) throw new Error('missing payment fields');
+        if (coll === 'payments') clean.t = Date.now();
         if (coll === 'pins' && (clean.lat == null || clean.lng == null)) throw new Error('missing coords');
         if (coll === 'news' && !clean.text) throw new Error('missing text');
         doc = await store.put(coll, null, { ...base, ...clean, createdBy: by, createdAt: Date.now() });
@@ -345,7 +363,7 @@ io.on('connection', (socket) => {
         if (store.get('locations', pid)) { await store.del('locations', pid); io.emit('remove', { coll: 'locations', id: pid }); }
         await store.del('people', pid);
         io.emit('remove', { coll: 'people', id: pid });
-      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'routes', 'food'].includes(coll)) {
+      } else if (action === 'del' && ['tasks', 'supplies', 'pins', 'news', 'routes', 'food', 'expenses', 'payments'].includes(coll)) {
         await store.del(coll, str(id, 40));
         io.emit('remove', { coll, id });
       } else throw new Error('bad action');

@@ -349,12 +349,12 @@ textarea.input { min-height: 80px; resize: vertical; }
 /* ---------- tab bar ---------- */
 .tabbar {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-  display: grid; grid-template-columns: repeat(7, 1fr);
+  display: grid; grid-template-columns: repeat(8, 1fr);
   height: calc(var(--tabbar-h) + var(--safe-b)); padding-bottom: var(--safe-b);
   background: rgba(15, 23, 51, .88); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   border-top: 1px solid var(--line);
 }
-.tabbar button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.tabbar button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-size: 10.5px; min-width: 0; font-weight: 700; }
 .tabbar button svg { width: 24px; height: 24px; }
 .tabbar button[aria-current="page"] { color: var(--ember-2); }
 .tabbar button[aria-current="page"]::before {
@@ -486,3 +486,17 @@ body.navigating #view { padding-bottom: 130px; }
 .party-row { display: grid; grid-template-columns: 1fr 76px 76px 32px; gap: 6px; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .party-row .party-flags { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; }
 .party-row select[hidden] { display: block !important; visibility: hidden; }
+
+/* ---------- money ---------- */
+.money-count { grid-template-columns: repeat(3, 1fr); }
+.money-count b { font-size: 28px; }
+.money-count .neg b { color: var(--rose); }
+.money-count .pos b { color: var(--moon); }
+.settle-row { gap: 8px; }
+.settle-row .arrow { color: var(--muted); font-weight: 800; }
+.settle-row.mine { background: rgba(255, 138, 61, .1); border-radius: var(--r-md); padding: 8px; margin: 0 -8px; }
+.amt { font-family: var(--display); font-size: 26px; color: var(--ember-2); white-space: nowrap; }
+.exp-row { cursor: pointer; }
+.pay-big { font-family: var(--display); font-size: 64px; text-align: center; color: var(--ember-2); text-shadow: 0 0 30px rgba(255, 138, 61, .45); margin: 0 0 10px; }
+.bit-btn { margin: 14px 0 8px; text-align: center; justify-content: center; background: linear-gradient(135deg, #1fc0d0, #2a7de1); color: #fff; }
+.phone-nudge { border-color: rgba(255, 138, 61, .45); background: rgba(255, 138, 61, .08); }

@@ -40,7 +40,7 @@ function distKm(a, b) {
 const fmtDist = (km) => (km < 1 ? `${Math.round(km * 1000)} מ׳` : `${km.toFixed(km < 10 ? 1 : 0)} ק״מ`);
 
 // ---------- state ----------
-const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes', 'food', 'foodchat'];
+const COLLS = ['people', 'tasks', 'supplies', 'locations', 'pins', 'info', 'news', 'routes', 'food', 'foodchat', 'expenses', 'payments'];
 const S = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let me = ls.get('trip.me');
 let online = new Set();
@@ -138,7 +138,7 @@ function toast(html, p) {
 }
 
 // ---------- routing ----------
-const ROUTES = ['home', 'tasks', 'gear', 'food', 'map', 'voice', 'photos'];
+const ROUTES = ['home', 'tasks', 'gear', 'food', 'money', 'map', 'voice', 'photos'];
 const hashRoute = () => location.hash.slice(2).split('?')[0];
 const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '');
 let route = ROUTES.includes(hashRoute()) ? hashRoute() : 'home';
@@ -223,6 +223,13 @@ function mountSections() {
       <div id="food-list"></div>
       <button class="btn ghost block" id="food-add" style="margin-top:6px">+ הוספת פריט</button>
     </section>
+    <section id="sec-money">
+      <h1 class="page-title">הוצאות</h1>
+      <p class="page-sub">כל אחד מוסיף מה הוא שילם, והאתר מחשב מי מעביר למי – בכמה שפחות העברות.</p>
+      <div class="panel" id="money-sum"></div>
+      <div class="panel" id="money-settle"></div>
+      <div class="panel" id="money-list"></div>
+    </section>
     <section id="sec-photos">
       <h1 class="page-title">תמונות מהטיול</h1>
       <p class="page-sub">כל תמונה שמעלים נשמרת בתיקייה משותפת בגוגל דרייב, ופתוחה לצפייה לכולם.</p>
@@ -237,17 +244,18 @@ function mountSections() {
       <div id="photo-grid"></div>
     </section>`;
   for (const r of ROUTES) sections[r] = $(`#sec-${r}`);
-  bindTasks(); bindGear(); bindFood(); bindMap(); bindPhotos();
+  bindTasks(); bindGear(); bindFood(); bindMoney(); bindMap(); bindPhotos();
 }
 
 // ---------- render dispatch ----------
 function renderAll() {
   if (!loaded) return;
-  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots(); renderRoutePanel(); drawRoute(); renderFood();
+  renderMe(); renderHome(); renderTasks(); renderGear(); renderWhere(); updateMarkers(); renderVoice(); renderDots(); renderRoutePanel(); drawRoute(); renderFood(); renderMoney();
   if (route === 'photos') renderPhotos();
 }
 function renderColl(c) {
   if (c === 'people') return renderAll();
+  if (c === 'expenses' || c === 'payments') renderMoney();
   if (c === 'food' || c === 'foodchat') { if (c === 'foodchat') renderChef(); else renderFood(); }
   if (c === 'tasks') { renderTasks(); renderHome(); }
   if (c === 'supplies') { renderGear(); renderHome(); }
@@ -313,6 +321,9 @@ function renderHome() {
       <button class="stat" data-go="gear"><b>${unclaimed}</b><span>פריטי ציוד לכולם שאף אחד עוד לא לקח</span></button>
     </div>
 
+    ${me && meP() && !meP().phone ? `<div class="panel phone-nudge"><div class="who-row" style="border:0;padding:0">
+      <span style="font-size:26px">📱</span><div class="grow"><b>הוסיפו את המספר שלכם לביט</b><small>כדי שאפשר יהיה להחזיר לכם כסף על הוצאות</small></div>
+      <button class="btn small" id="add-phone">הוספה</button></div></div>` : ''}
     ${homeRouteCard()}
 
     ${me ? `<div class="panel">
@@ -556,6 +567,7 @@ function personSheet(p) {
         <label class="btn small ghost">החלפת תמונה<input type="file" accept="image/*" id="pf" hidden></label>
       </div>
       <label class="field"><span>שם</span><input class="input" name="name" value="${esc(d.name)}" maxlength="40" required></label>
+      <label class="field"><span>טלפון (להעברות בביט)</span><input class="input" name="phone" type="tel" inputmode="tel" dir="ltr" value="${esc(d.phone || '')}" maxlength="20" placeholder="05X-XXXXXXX"></label>
       <div class="field"><span>מגיע?</span><div class="seg" id="rsvp" style="margin:0">
         <button type="button" data-r="solo">לבד</button>
         <button type="button" data-r="with">עם עוד אנשים</button>
@@ -623,7 +635,7 @@ function personSheet(p) {
     $('#f', root).onsubmit = async (e) => {
       e.preventDefault();
       const clean = rsvp === 'with' ? party.filter((m) => m.name.trim()).map((m) => ({ ...m, name: m.name.trim() })) : [];
-      const data = { name: e.target.name.value, companions: clean.map((m) => m.name).join(', '), party: clean, rsvp, color, avatar,
+      const data = { name: e.target.name.value, phone: e.target.phone.value, companions: clean.map((m) => m.name).join(', '), party: clean, rsvp, color, avatar,
         drinks: e.target.drinks.checked, veg: e.target.veg.checked, noRed: e.target.noRed.checked };
       closeSheet();
       await op('people', isNew ? 'add' : 'patch', p?.id, data);
@@ -1109,6 +1121,154 @@ function renderWhere() {
 }
 setInterval(() => { if (route === 'map') { renderWhere(); updateMarkers(); } }, 30000);
 
+// ---------- money: shared expenses, who owes whom, Bit ----------
+const nis = (x) => `₪${(Math.round(x * 100) / 100).toLocaleString('he-IL', { maximumFractionDigits: 2 })}`;
+const famSize = (id) => { const p = person(id); return p ? Math.max(1, partySize(p)) : 1; };
+const coming = () => [...S.people.values()].filter((p) => rsvpOf(p) !== 'no');
+const EXP_CATS = ['אוכל', 'שתייה', 'דלק', 'ציוד', 'לינה / כניסה', 'אחר'];
+
+// Each expense: payer, amount, the families it's split between, and how (equally or by number of people)
+function shares(e) {
+  const among = (e.among?.length ? e.among : coming().map((p) => p.id)).filter((id) => S.people.has(id));
+  const w = among.map((id) => (e.by === 'people' ? famSize(id) : 1));
+  const tot = w.reduce((a, b) => a + b, 0) || 1;
+  return among.map((id, i) => [id, (e.amount * w[i]) / tot]);
+}
+function balances() {
+  const bal = new Map([...S.people.keys()].map((id) => [id, 0]));
+  const add = (id, x) => bal.set(id, (bal.get(id) || 0) + x);
+  for (const e of S.expenses.values()) { add(e.paidBy, +e.amount || 0); for (const [id, x] of shares(e)) add(id, -x); }
+  for (const p of S.payments.values()) { add(p.from, +p.amount || 0); add(p.to, -(+p.amount || 0)); }
+  return bal;
+}
+// Fewest transfers: biggest debtor pays biggest creditor, repeat
+function settle(bal) {
+  const debt = [...bal].filter(([, v]) => v < -0.5).map(([id, v]) => ({ id, v: -v })).sort((a, b) => b.v - a.v);
+  const cred = [...bal].filter(([, v]) => v > 0.5).map(([id, v]) => ({ id, v })).sort((a, b) => b.v - a.v);
+  const out = [];
+  while (debt.length && cred.length) {
+    const d = debt[0], c = cred[0]; const x = Math.min(d.v, c.v);
+    out.push({ from: d.id, to: c.id, amount: Math.round(x) });
+    d.v -= x; c.v -= x;
+    if (d.v < 0.5) debt.shift(); if (c.v < 0.5) cred.shift();
+    debt.sort((a, b) => b.v - a.v); cred.sort((a, b) => b.v - a.v);
+  }
+  return out.filter((t) => t.amount > 0);
+}
+
+function bindMoney() {
+  $('#sec-money').addEventListener('click', (e) => {
+    if (e.target.closest('#exp-add')) return expenseSheet(null);
+    const ex = e.target.closest('[data-exp]'); if (ex) return expenseSheet(S.expenses.get(ex.dataset.exp));
+    const pay = e.target.closest('[data-pay]'); if (pay) return paySheet(JSON.parse(pay.dataset.pay));
+    const un = e.target.closest('[data-unpay]'); if (un && confirmInline(un)) return op('payments', 'del', un.dataset.unpay);
+  });
+}
+
+function renderMoney() {
+  const root = $('#sec-money'); if (!root || !loaded) return;
+  const exps = [...S.expenses.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const total = exps.reduce((a, e) => a + (+e.amount || 0), 0);
+  const bal = balances(); const plan = settle(bal);
+  const mineBal = bal.get(me) || 0;
+  const people = coming().length || 1;
+  $('#money-sum').innerHTML = `
+    <div class="food-count money-count">
+      <div><b>${nis(total)}</b><span>סה״כ הוצאות</span></div>
+      <div><b>${nis(total / people)}</b><span>ממוצע למשפחה</span></div>
+      <div class="${mineBal < -0.5 ? 'neg' : mineBal > 0.5 ? 'pos' : ''}"><b>${nis(Math.abs(mineBal))}</b><span>${mineBal < -0.5 ? 'אני חייב' : mineBal > 0.5 ? 'חייבים לי' : 'אני מאוזן'}</span></div>
+    </div>`;
+  $('#money-settle').innerHTML = `<div class="panel-head"><h2>מי מעביר למי</h2><span class="small muted">${plan.length ? `${plan.length} העברות וסיימנו` : ''}</span></div>
+    ${plan.length ? plan.map((t) => {
+      const f = person(t.from), to = person(t.to); const mine = t.from === me;
+      return `<div class="who-row settle-row ${mine ? 'mine' : ''}">
+        ${av(f, 36)}
+        <div class="grow"><b>${mine ? 'אני' : esc(firstName(f))}</b><small>מעביר ל${t.to === me ? 'י' : esc(firstName(to))}</small></div>
+        <b class="amt">${nis(t.amount)}</b>
+        ${mine || t.to === me ? `<button class="btn small ${mine ? '' : 'ghost'}" data-pay='${esc(JSON.stringify(t))}'>${mine ? '💸 ביט' : 'קיבלתי'}</button>` : ''}
+      </div>`;
+    }).join('') : `<p class="muted" style="margin:0">${exps.length ? 'כולם מאוזנים 🎉' : 'עוד אין הוצאות.'}</p>`}`;
+  const pays = [...S.payments.values()].sort((a, b) => b.t - a.t);
+  $('#money-list').innerHTML = `<div class="panel-head"><h2>הוצאות</h2><button class="btn small" id="exp-add">+ הוצאה</button></div>
+    ${exps.length ? exps.map((e) => {
+      const p = person(e.paidBy); const n = shares(e).length;
+      return `<div class="row exp-row" data-exp="${esc(e.id)}">${av(p, 34)}
+        <div class="grow"><span class="title">${esc(e.title)}</span><div class="meta">${esc(firstName(p))} שילם · ${n === coming().length ? 'כולם' : `${n} משפחות`} · ${e.by === 'people' ? 'לפי נפשות' : 'שווה למשפחה'}${e.cat ? ` · ${esc(e.cat)}` : ''}</div></div>
+        <b class="amt">${nis(e.amount)}</b></div>`;
+    }).join('') : '<p class="muted" style="margin:0">הוסיפו כל הוצאה משותפת: בשר, דלק, כניסה לחניון…</p>'}
+    ${pays.length ? `<div class="panel-head" style="margin-top:16px"><h2>העברות שבוצעו</h2></div>${pays.map((x) => `
+      <div class="who-row">${av(person(x.from), 28)}<div class="grow"><b>${esc(firstName(person(x.from)))} ← ${esc(firstName(person(x.to)))}</b><small>${x.method === 'cash' ? 'מזומן' : 'ביט'} · ${ago(x.t)}</small></div>
+        <b class="amt">${nis(x.amount)}</b><button class="mini" data-unpay="${esc(x.id)}" aria-label="ביטול">✕</button></div>`).join('')}` : ''}`;
+}
+
+function expenseSheet(e) {
+  const isNew = !e;
+  const d = e || { title: '', amount: '', paidBy: me, among: [], by: 'family', cat: 'אוכל' };
+  let among = new Set(d.among?.length ? d.among : coming().map((p) => p.id));
+  let by = d.by || 'family'; let paidBy = d.paidBy || me;
+  openSheet(`
+    <h3>${isNew ? 'הוצאה חדשה' : 'עריכת הוצאה'}</h3>
+    <form id="f">
+      <label class="field"><span>על מה</span><input class="input" name="title" value="${esc(d.title)}" maxlength="80" placeholder="למשל: בשר מהקצב" required></label>
+      <div class="grid2">
+        <label class="field"><span>סכום (₪)</span><input class="input" name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${esc(d.amount)}" required></label>
+        <label class="field"><span>קטגוריה</span><select class="input" name="cat">${EXP_CATS.map((c) => `<option ${d.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      </div>
+      <div class="field"><span>מי שילם</span><div class="pick-people" id="payer">${coming().map((p) => `<button type="button" data-id="${esc(p.id)}" aria-pressed="${p.id === paidBy}">${av(p, 40)}<span>${esc(firstName(p))}</span></button>`).join('')}</div></div>
+      <div class="field"><span>מתחלק בין</span><div class="pick-people" id="among">${coming().map((p) => `<button type="button" data-id="${esc(p.id)}" aria-pressed="${among.has(p.id)}">${av(p, 40)}<span>${esc(firstName(p))}</span></button>`).join('')}</div></div>
+      <div class="seg" id="by" style="margin:0 0 6px"><button type="button" data-b="family">שווה לכל משפחה</button><button type="button" data-b="people">לפי מספר נפשות</button></div>
+      <p class="small muted" id="split-prev" style="margin:0 0 12px"></p>
+      <div class="actions"><button class="btn" type="submit">${isNew ? 'הוספה' : 'שמירה'}</button><button class="btn ghost" type="button" data-close>ביטול</button></div>
+      ${isNew ? '' : '<button class="btn danger block" type="button" id="del" style="margin-top:10px">מחיקת ההוצאה</button>'}
+    </form>`, (root) => {
+    const prev = () => {
+      $$('#by button', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.b === by));
+      const amt = +$('[name=amount]', root).value || 0;
+      const sh = shares({ amount: amt, among: [...among], by });
+      $('#split-prev', root).textContent = amt && sh.length ? sh.map(([id, x]) => `${firstName(person(id))} ${nis(x)}`).join(' · ') : '';
+    };
+    $$('#payer button', root).forEach((b) => (b.onclick = () => { paidBy = b.dataset.id; $$('#payer button', root).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
+    $$('#among button', root).forEach((b) => (b.onclick = () => { among.has(b.dataset.id) ? among.delete(b.dataset.id) : among.add(b.dataset.id); b.setAttribute('aria-pressed', among.has(b.dataset.id)); prev(); }));
+    $$('#by button', root).forEach((b) => (b.onclick = () => { by = b.dataset.b; prev(); }));
+    $('[name=amount]', root).oninput = prev; prev();
+    $('#del', root)?.addEventListener('click', (ev) => { if (confirmInline(ev.currentTarget)) { closeSheet(); op('expenses', 'del', e.id); } });
+    $('#f', root).onsubmit = async (ev) => {
+      ev.preventDefault();
+      if (!among.size) return toast('בחרו בין מי מתחלקים');
+      const all = among.size === coming().length;
+      const data = { title: ev.target.title.value, amount: +ev.target.amount.value || 0, cat: ev.target.cat.value, paidBy, by, among: all ? [] : [...among] };
+      closeSheet(); await op('expenses', isNew ? 'add' : 'patch', e?.id, data);
+    };
+  });
+}
+
+// Bit has no public API for transfers between people: we copy the phone and amount, open the app, then record the payment
+function paySheet(t) {
+  const to = person(t.to); const from = person(t.from); const mine = t.from === me;
+  const phone = (to?.phone || '').replace(/[^\d+]/g, '');
+  const android = /android/i.test(navigator.userAgent);
+  const bitUrl = android ? 'intent://#Intent;package=com.bnhp.payments.paymentsapp;end' : 'https://apps.apple.com/il/app/bit/id1182007739';
+  openSheet(`
+    <h3>${mine ? `העברה ל${esc(firstName(to))}` : `${esc(firstName(from))} מעביר לך`}</h3>
+    <div class="pay-big">${nis(t.amount)}</div>
+    ${mine ? `
+      <div class="who-row">${av(to, 40)}<div class="grow"><b>${esc(to?.name || '')}</b><small dir="ltr" style="text-align:right">${phone ? esc(phone) : `${esc(firstName(to))} עוד לא הוסיף מספר לביט – בקשו ממנו להוסיף בפרופיל`}</small></div>
+        ${phone ? '<button class="btn small ghost" id="cp-phone">העתקה</button>' : ''}</div>
+      <a class="btn block bit-btn" id="open-bit" href="${bitUrl}" target="_blank" rel="noopener">💸 פתיחת ביט</a>
+      <p class="small muted">ביט לא מאפשרת לאתרים חיצוניים לבצע העברה. לחיצה מעתיקה את המספר והסכום ופותחת את ביט – שם בוחרים "העברה לפי מספר נייד", מדביקים ומאשרים. אחר כך חוזרים לכאן ומסמנים ששילמתם.</p>` : '<p class="small muted">סמנו כשהכסף הגיע אליכם.</p>'}
+    <div class="actions" style="margin-top:12px">
+      <button class="btn teal" id="paid-bit">✓ ${mine ? 'העברתי בביט' : 'קיבלתי בביט'}</button>
+      <button class="btn ghost" id="paid-cash">שולם במזומן</button>
+    </div>`, (root) => {
+    const copy = (s) => navigator.clipboard?.writeText(s).then(() => toast('הועתק'), () => {});
+    $('#cp-phone', root)?.addEventListener('click', () => copy(phone));
+    $('#open-bit', root)?.addEventListener('click', () => { copy(`${phone} ${t.amount}`); });
+    const record = async (method) => { closeSheet(); await op('payments', 'add', null, { from: t.from, to: t.to, amount: t.amount, method }); toast(`נרשם: ${esc(firstName(from))} ← ${esc(firstName(to))} ${nis(t.amount)}`); };
+    $('#paid-bit', root).onclick = () => record('bit');
+    $('#paid-cash', root).onclick = () => record('cash');
+  });
+}
+
 // ---------- food & drinks (quantities by headcount + the chef assistant) ----------
 let foodView = ls.get('trip.foodView') === 'shop' ? 'shop' : 'meals';
 let foodFilter = 'all';
@@ -1479,6 +1639,7 @@ function homeRouteCard() {
     <div class="actions" style="margin-top:12px">${nav ? '<button class="btn danger" data-navtoggle>⏹ סיום ניווט</button>' : '<button class="btn" data-navtoggle>▶ התחלת ניווט קולי</button>'}</div>
   </div>`;
 }
+document.addEventListener('click', (e) => { if (e.target.closest('#add-phone')) { personSheet(meP()); setTimeout(() => $('#sheet-root [name=phone]')?.focus(), 300); } });
 document.addEventListener('click', (e) => { if (e.target.closest('[data-navtoggle]')) { nav ? stopNav() : startNav(); renderHome(); } });
 
 function renderRoutePanel() {
