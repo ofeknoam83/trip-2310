@@ -151,6 +151,25 @@ export function mountGame({ app, io, store }) {
   setInterval(tick, 45e3);
   setTimeout(() => { spawnTick().catch(() => {}); trailSpawns().catch(() => {}); }, 8000);
 
+  // ----- narrator: one character shown (without the PIN) while place overviews are read aloud -----
+  const narratorChar = () => {
+    const ready = store.all('gchars').filter((c) => c.status === 'ready' && c.glb);
+    const set = store.get('info', 'main')?.narrator;
+    if (set === 'none') return null;
+    return ready.find((c) => c.id === set) || ready.find((c) => /kenett|קנת/i.test(c.name)) || ready.find((c) => c.husband === 'omer') || null;
+  };
+  app.get('/api/narrator', (_req, res) => { const c = narratorChar(); res.json(c ? { id: c.id, name: c.name, v: c.glb } : {}); });
+  app.get('/api/narrator.glb', async (_req, res) => {
+    const c = narratorChar(); if (!c) return res.status(404).end();
+    const b = await store.blobGet(c.glb); if (!b?.length) return res.status(404).end();
+    res.set({ 'content-type': 'model/gltf-binary', 'cache-control': 'public, max-age=3600' }).send(b);
+  });
+  app.post('/api/game/narrator', guard, async (req, res) => {
+    const id = req.body?.id === null ? 'none' : str(req.body?.id, 40);
+    const doc = store.get('info', 'main') ? await store.patch('info', 'main', { narrator: id }) : await store.put('info', 'main', { narrator: id });
+    io.emit('upsert', { coll: 'info', doc, by: null }); res.json({ ok: true, narrator: narratorChar()?.id || null });
+  });
+
   // ----- REST -----
   app.get('/api/game/check', (req, res) => res.json({ enabled: !!PIN, ok: ok(req), models: !!TRIPO_KEY }));
   app.get('/api/game/state', guard, (_req, res) => res.json({

@@ -556,3 +556,14 @@ body.go-open .tabbar, body.go-open #nav-bar { display: none; }
 .go-msg b { font-family: var(--display); font-size: 36px; line-height: 1; } .go-msg span { color: var(--rc); font-weight: 700; }
 .go-conf { position: absolute; top: -40px; font-style: normal; font-size: 26px; animation: goFall 2.2s ease-in forwards; pointer-events: none; }
 @keyframes goFall { to { transform: translateY(110vh) rotate(540deg); opacity: .2; } }
+
+/* narrator on screen while a place overview is read aloud */
+.narrator { position: fixed; z-index: 450; inset-inline-start: 12px; bottom: calc(var(--tabbar-h) + var(--safe-b) + 14px); width: 170px; height: 262px;
+  border-radius: 24px; overflow: hidden; pointer-events: none; opacity: 0; transform: translateY(20px) scale(.92); transition: opacity .35s, transform .35s;
+  background: radial-gradient(circle at 50% 85%, rgba(255, 138, 61, .45), rgba(15, 23, 51, .85) 70%); border: 1px solid rgba(255, 179, 107, .5);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .5), 0 0 30px rgba(255, 138, 61, .3); backdrop-filter: blur(10px); }
+.narrator.in { opacity: 1; transform: none; }
+.narrator.out { opacity: 0; transform: translateY(20px) scale(.92); }
+.narrator canvas { width: 170px; height: 230px; display: block; }
+.narrator .narr-name { text-align: center; font-weight: 800; font-size: 13px; color: var(--ember-2); margin-top: -2px; }
+@media (min-width: 760px) { .narrator { bottom: 110px; inset-inline-start: calc(50% - 300px); } }

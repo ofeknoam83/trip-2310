@@ -445,7 +445,7 @@ function placeSheet(id) {
 }
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-place]');
-  if (b) { e.preventDefault(); map?.closePopup(); placeSheet(b.dataset.place); }
+  if (b && !b.classList.contains('speak')) { e.preventDefault(); map?.closePopup(); placeSheet(b.dataset.place); }
 });
 function checkArrival(pos) {
   if (!pos) return;
@@ -657,7 +657,7 @@ function openSheet(html, bind) {
   bind?.(root);
   setTimeout(() => $('.sheet input:not([type=file]), .sheet textarea', root)?.focus({ preventScroll: true }), 250);
 }
-function closeSheet() { $('#sheet-root').innerHTML = ''; try { speechSynthesis.cancel(); } catch {} if (narr) { narr.pause(); narr = null; } }
+function closeSheet() { $('#sheet-root').innerHTML = ''; try { speechSynthesis.cancel(); } catch {} if (narr) { narr.pause(); narr = null; } game?.narrate(false); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 function peoplePicker(selected, multi) {
@@ -1985,23 +1985,26 @@ if (hashQuery.get('route') === 'fail') setTimeout(() => {
 // ---------- read aloud (device voice) ----------
 let narr = null; // currently playing ElevenLabs audio
 function speak(text, btn, tts) {
-  if (narr) { narr.pause(); narr = null; if (btn) btn.textContent = '🔊 הקראה'; return; }
+  if (narr) { narr.pause(); narr = null; game?.narrate(false); if (btn) btn.textContent = '🔊 הקראה'; return; }
   if (config.tts && tts) {
+    game?.narrate(true);
     narr = new Audio(`/api/tts?place=${encodeURIComponent(tts.place)}&part=${tts.part}`);
     if (btn) btn.textContent = '⏳ מכין הקראה…';
     narr.onplaying = () => { if (btn) btn.textContent = '⏹ עצירה'; };
-    narr.onended = () => { narr = null; if (btn) btn.textContent = '🔊 הקראה'; };
-    narr.onerror = () => { narr = null; if (btn) btn.textContent = '🔊 הקראה'; toast('ההקראה לא זמינה כרגע – משתמשים בקול של הטלפון'); speak(text, btn); };
+    narr.onended = () => { narr = null; game?.narrate(false); if (btn) btn.textContent = '🔊 הקראה'; };
+    narr.onerror = () => { narr = null; game?.narrate(false); if (btn) btn.textContent = '🔊 הקראה'; toast('ההקראה לא זמינה כרגע – משתמשים בקול של הטלפון'); speak(text, btn); };
     narr.play().catch(() => {});
     return;
   }
   if (!('speechSynthesis' in window)) return toast('הדפדפן הזה לא תומך בהקראה');
-  if (speechSynthesis.speaking) { speechSynthesis.cancel(); if (btn) btn.textContent = '🔊 הקראה'; return; }
+  if (speechSynthesis.speaking) { speechSynthesis.cancel(); game?.narrate(false); if (btn) btn.textContent = '🔊 הקראה'; return; }
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'he-IL'; u.rate = 0.95;
   const v = speechSynthesis.getVoices().find((x) => x.lang?.startsWith('he'));
   if (v) u.voice = v;
-  u.onend = () => { if (btn) btn.textContent = '🔊 הקראה'; };
+  u.onend = () => { game?.narrate(false); if (btn) btn.textContent = '🔊 הקראה'; };
+  u.onerror = () => game?.narrate(false);
   if (btn) btn.textContent = '⏹ עצירה';
+  game?.narrate(true);
   speechSynthesis.speak(u);
 }

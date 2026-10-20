@@ -188,12 +188,18 @@ export function initGame(ctx) {
         <span class="go-thumb">${c.thumb ? `<img src="${blobUrl(c.thumb)}" alt="">` : c.photo ? `<img src="${blobUrl(c.photo)}" alt="">` : '❓'}</span>
         <div class="grow"><b>${esc(c.name)}</b><small>${STATUS[c.status] || c.status}${c.status !== 'ready' && c.status !== 'failed' ? ` · ${c.progress || 0}%` : ''}${c.error ? ` · ${esc(c.error)}` : ''}${c.status === 'ready' && c.source !== 'glb' && !c.glbWave ? ' · בלי אנימציה' : ''}${c.source === 'glb' ? ' · GLB' : ''}</small></div>
         ${c.status === 'failed' ? `<button class="btn small" data-retry="${esc(c.id)}">שוב</button>` : ''}
+        ${c.status === 'ready' ? `<button class="btn small ${narratorId === c.id ? 'teal' : 'ghost'}" data-narr="${esc(c.id)}" title="מופיע כשמקריאים סקירה">🎙️</button>` : ''}
         <button class="btn small ghost" data-edit="${esc(c.id)}">עריכה</button>
       </div>`).join('') || '<p class="muted" style="margin:0">הוסיפו כל אחת – קובץ GLB מ־Avaturn, או תמונה של גוף מלא שתהפוך למודל ב־Tripo (כמה דקות).</p>'}
       </div>
       <button class="btn danger block" id="go-wipe">מחיקת כל התמונות והמודלים (אחרי הטיול)</button>`;
     $('#go-add', el)?.addEventListener('click', () => charSheet(null));
     $$('[data-edit]', el).forEach((b) => (b.onclick = () => charSheet(G.gchars.get(b.dataset.edit))));
+    $$('[data-narr]', el).forEach((b) => (b.onclick = async () => {
+      const off = narratorId === b.dataset.narr;
+      const r = await api('/api/game/narrator', { method: 'POST', body: JSON.stringify({ id: off ? null : b.dataset.narr }) }); const j = await r.json().catch(() => ({}));
+      narratorId = j.narrator || null; narrInfo = null; toast(narratorId ? `${esc(G.gchars.get(narratorId)?.name || '')} יקריא את הסקירות 🎙️` : 'בלי קריין על המסך'); renderAdmin();
+    }));
     $$('[data-retry]', el).forEach((b) => (b.onclick = () => api(`/api/game/chars/${b.dataset.retry}/retry`, { method: 'POST', body: '{}' })));
     $('#go-wipe', el).onclick = (e) => { if (ctx.confirmInline(e.currentTarget)) api('/api/game/wipe', { method: 'POST', body: '{}' }).then(() => toast('הכול נמחק')); };
   }
@@ -303,13 +309,17 @@ export function initGame(ctx) {
       aim(b('RightForeArm'), b('RightHand'), V(side * 0.1, -1, 0.2));
     }
     const rest = new Map(); for (const k of ['Spine1', 'Spine2', 'Neck', 'Head', 'RightArm', 'RightForeArm']) if (b(k)) rest.set(k, b(k).quaternion.clone());
-    let waving = 0; let up = null;
+    let waving = 0; let up = null; let talking = 0;
     return {
       set wave(v) { waving = v ? 1 : 0; },
+      set talk(v) { talking = v ? 1 : 0; },
       update(t) {
         const sp = b('Spine2') || b('Spine1'); const hd = b('Head');
         if (full && sp) { sp.quaternion.copy(rest.get(sp === b('Spine2') ? 'Spine2' : 'Spine1')); sp.rotateX(Math.sin(t * 1.6) * 0.025); }
         if (full && hd) { hd.quaternion.copy(rest.get('Head')); hd.rotateY(Math.sin(t * 0.5) * 0.25); hd.rotateX(Math.sin(t * 0.8) * 0.05); }
+        // "Talking": small nods and turns of the head, a little sway in the chest
+        if (talking && hd) { hd.rotateX(Math.sin(t * 7.5) * 0.045 + Math.sin(t * 2.9) * 0.03); hd.rotateY(Math.sin(t * 1.6) * 0.09); hd.rotateZ(Math.sin(t * 2.2) * 0.03); }
+        if (talking && sp) sp.rotateY(Math.sin(t * 1.3) * 0.04);
         const ra = b('RightArm'), rf = b('RightForeArm');
         if (ra && waving) {
           if (!up) { aim(ra, rf, V(side * 0.55, 0.85, 0.15)); aim(rf, b('RightHand'), V(side * 0.2, 1, 0.1)); up = { a: ra.quaternion.clone(), f: rf?.quaternion.clone() }; }
@@ -493,6 +503,37 @@ export function initGame(ctx) {
       <div class="grow"><b>Wife <span class="go-o">GO</span></b><small>${!info.enabled ? 'בקרוב – מחכה להפעלה' : unlocked ? (n ? `${n} בטווח קילומטר ממך` : 'מחפשים אותן בשטח') : 'נעול בקוד הטיול'}</small></div><span class="btn small">${!info.enabled ? 'מה זה?' : unlocked ? 'לשחק' : 'פתיחה'}</span></div></div>`;
   }
 
+  // ---------- narrator on screen while a place overview is read aloud ----------
+  let narratorId = null; let narrInfo = null; let narr = null;
+  fetch('/api/narrator').then((r) => r.json()).then((j) => { narratorId = j.id || null; narrInfo = j; }).catch(() => {});
+  async function narrate(on) {
+    if (!on) { if (narr) { narr.el.classList.add('out'); const n = narr; narr = null; n.stopped = true; setTimeout(() => { n.el.remove(); n.renderer?.dispose(); }, 400); } return; }
+    if (narr) return;
+    try { if (!narrInfo) narrInfo = await (await fetch('/api/narrator')).json(); } catch { return; }
+    if (!narrInfo?.id) return;
+    const el = document.createElement('div'); el.className = 'narrator';
+    el.innerHTML = `<canvas></canvas><div class="narr-name">🎙️ ${esc(narrInfo.name || '')}</div>`;
+    document.body.append(el);
+    const me = { el, stopped: false }; narr = me;
+    try {
+      await three();
+      const canvas = $('canvas', el); const w = 170, h = 230;
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true }); renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(w, h, false); me.renderer = renderer;
+      const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0x664422, 2.3));
+      const key = new THREE.DirectionalLight(0xffe2c0, 1.3); key.position.set(1.5, 2.5, 3); scene.add(key);
+      const cam = new THREE.PerspectiveCamera(30, w / h, 0.05, 20); cam.position.set(0, 1.38, 2.25); cam.lookAt(0, 1.18, 0);
+      const m = await loadModel(`/api/narrator.glb?v=${encodeURIComponent(narrInfo.v || '')}`, true);
+      if (me.stopped) { renderer.dispose(); return; }
+      scene.add(m.holder);
+      const mixer = m.clips.length ? new THREE.AnimationMixer(m.holder) : null; if (mixer) mixer.clipAction(m.clips[0]).play();
+      if (m.proc) m.proc.talk = true;
+      el.classList.add('in');
+      const clock = new THREE.Clock(); let t = 0;
+      const loop = () => { if (me.stopped) return; const dt = clock.getDelta(); t += dt; mixer?.update(dt); m.proc?.update(t); renderer.render(scene, cam); requestAnimationFrame(loop); };
+      loop();
+    } catch (e) { console.warn('[narrator]', e); el.remove(); if (narr === me) narr = null; }
+  }
+
   check();
-  return { render: () => { render(); track(true); }, leave: () => track(false), drawMap, homeCard };
+  return { narrate, render: () => { render(); track(true); }, leave: () => track(false), drawMap, homeCard };
 }
