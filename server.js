@@ -264,13 +264,15 @@ app.post('/share-target', (req, res) => {
 
 // Narration of place overviews with an ElevenLabs voice. Each text is generated once and cached.
 const { PLACES, REGIONS } = await import('./public/places.js');
+const { ROUTE_GUIDES } = await import('./public/places-route.js');
 const ttsInflight = new Map();
 app.get('/api/tts', async (req, res) => {
   if (!ELEVENLABS_API_KEY || !ELEVENLABS_VOICE_ID) return res.status(503).json({ error: 'tts not configured' });
-  const subject = PLACES.find((p) => p.id === req.query.place) || REGIONS.find((g) => g.id === req.query.place);
+  const gid = String(req.query.place || '').match(/^guide-(\d+)$/)?.[1];
+  const subject = (gid && ROUTE_GUIDES[gid] && { name: '', ...ROUTE_GUIDES[gid], kids: '' }) || PLACES.find((p) => p.id === req.query.place) || REGIONS.find((g) => g.id === req.query.place);
   const part = ['geo', 'history', 'kids', 'all'].includes(req.query.part) ? req.query.part : 'geo';
   if (!subject) return res.status(404).json({ error: 'unknown place' });
-  const text = part === 'all' ? `${subject.name}. ${subject.geo} ${subject.history} ${subject.kids}` : `${subject.name}. ${subject[part]}`;
+  const text = (part === 'all' ? `${subject.name}. ${subject.geo} ${subject.history || ''} ${subject.kids}` : `${subject.name}. ${subject[part] || ''}`).replace(/^\.\s*/, '').trim();
   const key = 'tts-' + crypto.createHash('sha1').update([ELEVENLABS_VOICE_ID, ELEVENLABS_MODEL, text].join('|')).digest('hex');
   try {
     let mp3 = await store.blobGet(key);

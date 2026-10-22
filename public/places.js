@@ -1,5 +1,6 @@
 // מאגר מקומות בכל הארץ: דרומית לבאר שבע כאן, וצפונית לה ב־places-north.js. עובד גם בלי קליטה.
 import { REGIONS_N, PLACES_N } from './places-north.js';
+import { ROUTE_PLACES } from './places-route.js';
 // r = רדיוס בק״מ שבו נחשבים "נמצאים במקום". הקואורדינטות משוערות.
 
 export const REGIONS = [
@@ -301,7 +302,7 @@ export const PLACES = [
 ];
 
 REGIONS.push(...REGIONS_N);
-PLACES.push(...PLACES_N);
+PLACES.push(...PLACES_N, ...ROUTE_PLACES);
 
 // ---------- helpers ----------
 export function distKm(a, b) {

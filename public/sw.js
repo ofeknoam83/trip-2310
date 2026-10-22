@@ -1,6 +1,6 @@
 // Network-first for the app shell, so the site still opens with weak reception.
-const CACHE = 'trip-2310-v10';
-const SHELL = ['/', '/styles.css', '/app.js', '/dunes.svg', '/topo.svg', '/avatars/group.jpg', '/places.js', '/places-north.js', '/food.js', '/game-client.js'];
+const CACHE = 'trip-2310-v11';
+const SHELL = ['/', '/styles.css', '/app.js', '/dunes.svg', '/topo.svg', '/avatars/group.jpg', '/places.js', '/places-north.js', '/places-route.js', '/food.js', '/game-client.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

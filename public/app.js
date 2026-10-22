@@ -1,5 +1,6 @@
 /* טיול 23-24/10 – client */
 import { PLACES, REGIONS, locate } from '/places.js';
+import { guideFor } from '/places-route.js';
 import * as F from '/food.js';
 import { initGame } from '/game-client.js';
 
@@ -434,13 +435,14 @@ function placeSheet(id) {
     <h3>${esc(p.name)}</h3>
     <p class="small muted" style="margin:-8px 0 14px">${esc(region?.name || '')}${d ? ` · ${d} מכם` : ''}</p>
     <div class="place-sec"><b>גאוגרפיה</b><p>${esc(p.geo)}</p></div>
-    <div class="place-sec"><b>היסטוריה</b><p>${esc(p.history)}</p></div>
+    ${p.warn ? `<div class="place-sec warn"><b>⚠️ בנהיגה</b><p>${esc(p.warn)}</p></div>` : ''}
+    ${p.history ? `<div class="place-sec"><b>היסטוריה</b><p>${esc(p.history)}</p></div>` : ''}
     <div class="place-sec kids"><b>לילדים</b><p>${esc(p.kids)}</p></div>
     <div class="actions">
       <button class="btn teal speak" id="speak-all">🔊 הקראה</button>
       <a class="btn ghost" href="https://waze.com/ul?ll=${p.lat},${p.lng}&navigate=yes" target="_blank" rel="noopener">Waze</a>
     </div>`, (r) => {
-    $('#speak-all', r).onclick = (e) => speak(`${p.name}. ${p.geo} ${p.history} ${p.kids}`, e.currentTarget, { place: p.id, part: 'all' });
+    $('#speak-all', r).onclick = (e) => speak(`${p.name}. ${p.geo} ${p.history || ''} ${p.kids}`, e.currentTarget, { place: p.id, part: 'all' });
   });
 }
 document.addEventListener('click', (e) => {
@@ -1475,13 +1477,15 @@ function sunsetAt(lat, lng, d = new Date()) {
 }
 const hhmm = (d) => d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 
+// What we say on arrival: one line of geography and one of history
+const placeBrief = (p) => [firstSentence(p.geo), firstSentence(p.history)].filter(Boolean).join(' ');
 // Everything worth announcing along the route: the file's own waypoints, our map pins, and known places near the line
 function routeItems(r, cum) {
   const items = [];
   const add = (it, maxOff) => { const s = snap(r.pts, cum, it); if (s.off <= maxOff) items.push({ ...it, along: s.along, off: s.off }); };
   for (const w of r.wpts || []) add({ kind: 'wpt', name: w.name, desc: w.desc, lat: w.lat, lng: w.lng }, 800);
   for (const p of S.pins.values()) add({ kind: 'pin', name: p.name, desc: (PIN_KINDS[p.kind] || PIN_KINDS.other)[1], lat: p.lat, lng: p.lng }, 400);
-  for (const p of PLACES) add({ kind: 'place', id: p.id, name: p.name, desc: firstSentence(p.geo), lat: p.lat, lng: p.lng }, Math.max(400, Math.min(p.r * 1000, 2500)));
+  for (const p of PLACES) add({ kind: 'place', id: p.id, name: p.name, desc: placeBrief(p), warn: p.warn, lat: p.lat, lng: p.lng }, Math.max(400, Math.min(p.r * 1000, 2500)));
   items.sort((a, b) => a.along - b.along);
   // Merge duplicates (same name, or a pin sitting on a waypoint)
   return items.filter((it, i) => !items.slice(0, i).some((o) => Math.abs(o.along - it.along) < 80 && (o.name === it.name || it.kind !== 'place')));
@@ -1506,6 +1510,7 @@ function startNav() {
   if (!shareOn || watchId == null) startShare();
   if (!wakeOn) { wakeOn = true; $('#wake-switch')?.setAttribute('aria-checked', 'true'); requestWake(); }
   navSay(`מתחילים ניווט בציר ${r.name}. ${sayDist(r.km * 1000)}${nav.items.length ? `, ו־${nav.items.length} נקודות ציון בדרך` : ''}.`, true);
+  const g = guideFor(r); if (g) navSay(`קצת על הדרך: ${g.geo} ${g.history}`);
   if (lastPos) navTick(lastPos, true);
   renderNavBar(); renderRoutePanel();
 }
@@ -1523,7 +1528,7 @@ function navTick(pos, first = false) {
   let s = nav.lastIdx != null && !nav.wasOff ? snap(r.pts, cum, pos, nav.lastIdx - 40, nav.lastIdx + 400) : null;
   if (!s || s.off > 120) s = snap(r.pts, cum, pos);
   nav.lastIdx = s.idx; nav.along = s.along; nav.off = s.off; nav.pos = pos;
-  if (first) for (const it of nav.items) if (it.along < s.along - 50) it.done = it.a1 = it.a2 = true;
+  if (first && s.off < 300) for (const it of nav.items) if (it.along < s.along - 50) it.done = it.a1 = it.a2 = true;
 
   // Speed (moving average of real movement) for the ETA
   if (nav.lastFix) {
@@ -1549,12 +1554,12 @@ function navTick(pos, first = false) {
     const d = it.along - s.along;
     const near = distKm(pos, it) * 1000;
     if (d < -60 && near > 300) { it.done = true; continue; } // passed it
-    if (!it.a1 && d <= 1000 && d > 400) { it.a1 = true; navSay(`בעוד ${sayDist(d)}: ${it.name}.`); }
-    else if (!it.a2 && d <= 300 && d > 60) { it.a1 = it.a2 = true; navSay(`עוד ${sayDist(d)}: ${it.name}.`); }
+    if (!it.a1 && d <= 1000 && d > 400) { it.a1 = true; navSay(`בעוד ${sayDist(d)}: ${it.name}.${it.warn ? ` ${it.warn}` : ''}`); }
+    else if (!it.a2 && d <= 300 && d > 60) { const w = it.warn && !it.a1; it.a1 = it.a2 = true; navSay(`עוד ${sayDist(d)}: ${it.name}.${w ? ` ${it.warn}` : ''}`); }
     else if (d <= 60 && near < Math.max(150, it.off + 80)) {
       it.done = it.a1 = it.a2 = true;
       const side = it.off > 120 ? ` ${it.name} נמצא ${sayDist(it.off)} מהציר, לכיוון ${dirName(bearing(pos, it))}.` : '';
-      navSay(`הגעתם: ${it.name}.${side} ${it.desc ? firstSentence(it.desc) : ''}`);
+      navSay(`הגעתם: ${it.name}.${side} ${it.kind === 'place' ? it.desc || '' : it.desc ? firstSentence(it.desc) : ''}`);
     }
   }
 
@@ -1660,6 +1665,7 @@ function renderRoutePanel() {
       </div>
       <div class="actions" style="margin-top:12px">
         ${nav ? '<button class="btn danger" id="nav-toggle">⏹ סיום ניווט</button>' : '<button class="btn" id="nav-toggle">▶ התחלת ניווט קולי</button>'}
+        <button class="btn ghost" id="route-guide">📖 סקירת הציר</button>
       </div>
       <p class="small muted" style="margin:10px 0 0">הקראה של נקודות הציון בדרך, מקומות מוכרים ליד הציר ונקודות שסימנתם במפה, התראה כשיורדים מהציר ובדיקת זמן מול השקיעה. הניווט משתף את המיקום שלך עם הקבוצה.</p>
       <details class="route-add"><summary>טעינת ציר אחר</summary>${importForm()}</details>`
@@ -1668,6 +1674,27 @@ function renderRoutePanel() {
   $('#route-manage', el)?.addEventListener('click', routesSheet);
   $('#route-fit', el)?.addEventListener('click', fitRoute);
   $('#nav-toggle', el)?.addEventListener('click', () => (nav ? stopNav() : startNav()));
+  $('#route-guide', el)?.addEventListener('click', () => routeGuideSheet(r));
+}
+// The route as a story: overview, then every known place along it in driving order
+function routeGuideSheet(r) {
+  if (!r) return;
+  const cum = cumOf(r.pts); const g = guideFor(r);
+  const items = routeItems(r, cum).filter((it) => it.kind === 'place');
+  const regions = [...new Set(items.map((it) => PLACES.find((p) => p.id === it.id)?.region))].map((id) => REGIONS.find((x) => x.id === id)?.name).filter(Boolean);
+  const gid = String(r.url || '').match(/track\/(\d{8,})/)?.[1];
+  const text = g ? `${g.geo} ${g.history}` : items.map((it) => `${it.name}. ${it.desc}`).join(' ');
+  openSheet(`
+    <h3>📖 ${esc(r.name)}</h3>
+    <p class="small muted" style="margin:-8px 0 14px">${fmtDist(r.km)} · ${items.length} נקודות עם סקירה${regions.length ? ` · ${esc(regions.join(', '))}` : ''}</p>
+    ${g ? `<div class="place-sec"><b>גאוגרפיה</b><p>${esc(g.geo)}</p></div><div class="place-sec"><b>היסטוריה</b><p>${esc(g.history)}</p></div>` : ''}
+    <div class="actions" style="margin:4px 0 14px"><button class="btn teal speak" id="speak-route">🔊 הקראת הסקירה</button></div>
+    <ol class="guide-list">${items.map((it) => {
+      const p = PLACES.find((x) => x.id === it.id);
+      return `<li><button class="guide-item" data-place="${esc(it.id)}"><span class="km">ק״מ ${(it.along / 1000).toFixed(1)}</span><b>${esc(it.name)}</b>${p?.warn ? '<em>⚠️ קטע נהיגה מאתגר</em>' : ''}<small>${esc(it.desc)}</small></button></li>`;
+    }).join('') || '<li class="small muted">אין עדיין נקודות מוכרות לאורך הציר הזה.</li>'}</ol>`, (root) => {
+    $('#speak-route', root).onclick = (e) => speak(text, e.currentTarget, g ? { place: `guide-${gid}`, part: 'all' } : null);
+  });
 }
 function importForm(intro = false) {
   return `${intro ? '<p class="small muted" style="margin:0 0 10px">משתפים קישור למסלול מעמוד ענן, אוף רוד, מפת שבילי ישראל או Google My Maps, או מעלים קובץ GPX / KML. כולם יראו את הציר.</p>' : ''}
