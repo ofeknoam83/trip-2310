@@ -435,7 +435,12 @@ textarea.input { min-height: 80px; resize: vertical; }
 .route-msg { color: var(--ember-2) !important; margin: 10px 0 0; }
 .route-add { margin-top: 14px; }
 .route-add summary { cursor: pointer; color: var(--sand-dim); font-weight: 700; margin-bottom: 10px; }
-.route-list .who-row { flex-wrap: wrap; gap: 8px; }
+.route-list .who-row { display: block; padding: 14px 0; }
+.route-info b { display: block; font-size: 17px; line-height: 1.35; }
+.route-info small { display: block; color: var(--muted); margin-top: 2px; }
+.route-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.route-btns > * { flex: 1 1 auto; justify-content: center; text-align: center; }
+#map { isolation: isolate; z-index: 0; }
 .route-end { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #1b1209; border: 2px solid var(--ember); font-size: 13px; color: var(--ember); box-shadow: 0 0 10px rgba(255, 138, 61, .6); }
 .route-end.start { color: var(--moon); border-color: var(--moon); box-shadow: 0 0 10px rgba(127, 224, 210, .6); }
 .route-wpt { width: 22px; height: 22px; border-radius: 6px; transform: rotate(45deg); display: grid; place-items: center; background: var(--ember-2); color: #24130a; font-size: 11px; font-weight: 800; border: 2px solid #24130a; }

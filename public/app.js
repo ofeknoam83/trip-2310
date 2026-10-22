@@ -1737,11 +1737,13 @@ function routesSheet() {
   openSheet(`<h3>צירי ניווט</h3>
     <div class="route-list">${list.map((r) => `
       <div class="who-row">
-        <div class="grow"><b>${esc(r.name)}</b><small>${fmtDist(r.km)} · ${SRC_NAME[r.source] || 'קובץ'} · ${ago(r.createdAt)}</small></div>
-        ${r.id === act ? '<span class="chip" aria-pressed="true">פעיל</span>' : `<button class="btn small" data-act="${esc(r.id)}">בחירה</button>`}
-        <button class="btn small ghost" data-ren="${esc(r.id)}">שינוי שם</button>
-        <button class="btn small ghost" data-rev="${esc(r.id)}" title="להתחיל מהקצה השני">⇅ היפוך כיוון</button>
-        <button class="btn small danger" data-del="${esc(r.id)}">מחיקה</button>
+        <div class="route-info"><b>${esc(r.name)}</b><small>${fmtDist(r.km)} · ${SRC_NAME[r.source] || 'קובץ'} · ${ago(r.createdAt)}${r.reversed ? ' · הפוך' : ''}</small></div>
+        <div class="route-btns">
+          ${r.id === act ? '<span class="chip" aria-pressed="true">✓ פעיל</span>' : `<button class="btn small" data-act="${esc(r.id)}">בחירה</button>`}
+          <button class="btn small ghost" data-rev="${esc(r.id)}" title="להתחיל מהקצה השני">⇅ היפוך</button>
+          <button class="btn small ghost" data-ren="${esc(r.id)}">שם</button>
+          <button class="btn small danger" data-del="${esc(r.id)}">מחיקה</button>
+        </div>
       </div>`).join('')}</div>
     <div class="actions"><button class="btn ghost" data-close>סגירה</button></div>`, (root) => {
     $$('[data-act]', root).forEach((b) => (b.onclick = async () => { if (nav) stopNav(false); await op('info', 'patch', 'main', { activeRoute: b.dataset.act }); closeSheet(); fitRoute(); }));
