@@ -221,6 +221,13 @@ const ROUTE_HELP = {
   amudanan: 'בעמוד ענן: פותחים את המסלול ← שמירה/ייצוא ← GPX, ומעלים כאן את הקובץ.',
   offroad: 'באוף רוד: פותחים את המסלול ← שיתוף ← ייצוא קובץ GPX או KML, ומעלים כאן את הקובץ.',
 };
+// Drive a route the other way: flip the line and the waypoint order
+app.post('/api/routes/:id/reverse', async (req, res) => {
+  const r = store.get('routes', str(req.params.id, 40)); if (!r) return res.status(404).json({ error: 'not found' });
+  const doc = await store.patch('routes', r.id, { pts: [...r.pts].reverse(), wpts: [...(r.wpts || [])].reverse(), reversed: !r.reversed });
+  io.emit('upsert', { coll: 'routes', doc, by: store.get('people', str(req.body?.by, 40))?.id || null });
+  res.json({ ok: true, doc: { id: doc.id, reversed: doc.reversed, start: doc.pts[0], end: doc.pts.at(-1) } });
+});
 app.post('/api/routes/import', async (req, res) => {
   const { url, file, filename, by } = req.body || {};
   try {

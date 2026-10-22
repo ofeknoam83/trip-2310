@@ -1620,7 +1620,7 @@ function renderNavBar() {
 function drawRoute() {
   if (!map) return;
   const r = activeRoute();
-  const key = r ? `${r.id}:${r.pts.length}` : null;
+  const key = r ? `${r.id}:${r.pts.length}:${r.pts[0]}` : null;
   if (key === routeLayerId) return;
   routeLayer?.remove(); routeLayer = null; routeLayerId = key;
   if (!r) return;
@@ -1713,10 +1713,16 @@ function routesSheet() {
         <div class="grow"><b>${esc(r.name)}</b><small>${fmtDist(r.km)} · ${SRC_NAME[r.source] || 'קובץ'} · ${ago(r.createdAt)}</small></div>
         ${r.id === act ? '<span class="chip" aria-pressed="true">פעיל</span>' : `<button class="btn small" data-act="${esc(r.id)}">בחירה</button>`}
         <button class="btn small ghost" data-ren="${esc(r.id)}">שינוי שם</button>
+        <button class="btn small ghost" data-rev="${esc(r.id)}" title="להתחיל מהקצה השני">⇅ היפוך כיוון</button>
         <button class="btn small danger" data-del="${esc(r.id)}">מחיקה</button>
       </div>`).join('')}</div>
     <div class="actions"><button class="btn ghost" data-close>סגירה</button></div>`, (root) => {
     $$('[data-act]', root).forEach((b) => (b.onclick = async () => { if (nav) stopNav(false); await op('info', 'patch', 'main', { activeRoute: b.dataset.act }); closeSheet(); fitRoute(); }));
+    $$('[data-rev]', root).forEach((b) => (b.onclick = async () => {
+      if (nav?.id === b.dataset.rev) stopNav(false);
+      const r = await fetch(`/api/routes/${encodeURIComponent(b.dataset.rev)}/reverse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by: me }) });
+      if (r.ok) { toast('הכיוון התהפך – ההתחלה עכשיו בקצה השני'); routeLayerId = null; drawRoute(); routesSheet(); } else toast('לא הצלחתי להפוך');
+    }));
     $$('[data-ren]', root).forEach((b) => (b.onclick = async () => { const r = S.routes.get(b.dataset.ren); const n = prompt('שם הציר', r?.name || ''); if (n?.trim()) { await op('routes', 'patch', b.dataset.ren, { name: n.trim() }); routesSheet(); } }));
     $$('[data-del]', root).forEach((b) => (b.onclick = async () => { if (!confirmInline(b)) return; if (nav?.id === b.dataset.del) stopNav(false); await op('routes', 'del', b.dataset.del); routesSheet(); }));
   });
